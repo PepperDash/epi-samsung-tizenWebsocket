@@ -1,0 +1,77 @@
+{
+	"system": {
+		"info": {}
+	},
+	"template": {
+		"devices": [
+			{
+				"key": "processor",
+				"type": "cp4n",
+				"name": "processor",
+				"group": "processor",
+				"supportedConfigModes": ["compliance", "essentials"],
+				"supportedSystemTypes": ["hudType", "presType", "vtcType", "custom"],
+				"supportsCompliance": true,
+				"properties": {
+					"numberOfComPorts": 3,
+					"numberOfIrPorts": 8,
+					"numberOfRelays": 8,
+					"numberOfDIOPorts": 8
+				}
+			},
+			{
+				"key": "sys-monitor-bridge",
+				"name": "sysMonitorBridge",
+				"group": "api",
+				"type": "eiscApiAdvanced",
+				"properties": {
+					"control": { "ipid": "3", "method": "ipidTcp", "tcpSshProperties": { "address": "127.0.0.2", "port": 0 } },
+					"devices": [{ "deviceKey": "systemMonitor", "joinStart": 1 }]
+				}
+			},
+			{
+				"key": "display-1",
+				"name": "Suite 1 Display",
+				"type": "samsungTizenWebsocket",
+				"group": "displays",
+				"properties": {
+					"control": {
+						"method": "https",
+						"tcpSshProperties": {
+							"address": "10.0.133.21",
+							"port": 8002,
+							"username": "",
+							"password": "",
+							"autoReconnect": true,
+							"autoReconnectIntervalMs": 10000
+						}
+					},
+					"pollIntervalMs": 30000,
+					"coolingTimeMs": 8000,
+					"warmingTimeMs": 10000,
+					"warningTimeoutMs": 180000,
+					"errorTimeoutMs": 300000,
+					"friendlyNames": [
+						{ "inputKey": "hdmi1", "name": "HDMI 1", "hideInput": false },
+						{ "inputKey": "hdmi2", "name": "HDMI 2", "hideInput": false }
+					]
+				}
+			},
+			{
+				"key": "display-bridge",
+				"group": "api",
+				"type": "eiscApiAdvanced",
+				"properties": {
+					"control": { "ipid": "a3", "method": "ipidTcp", "tcpSshProperties": { "address": "127.0.0.2", "port": 0 } },
+					"devices": [
+						{"deviceKey": "display-1" , "joinStart": 1   }
+					]
+				}
+			} 
+		],
+		"info": {},
+		"rooms": [],
+		"tieLines": [],
+		"joinMaps": {}
+	}
+}

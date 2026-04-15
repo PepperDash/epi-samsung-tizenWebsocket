@@ -1,0 +1,25 @@
+<Project>
+  <PropertyGroup>
+    <Version>1.0.0-local</Version>
+    <InformationalVersion>$(Version)</InformationalVersion>
+    <Authors>PepperDash Technology</Authors>
+    <Company>PepperDash Technology</Company>
+    <Product>PepperDash Essentials Plugin Samsung Tizen Websocket</Product>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <RunAnalyzersDuringBuild>true</RunAnalyzersDuringBuild>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <Copyright>Copyright © 2026 PepperDash Technology</Copyright>
+    <RepositoryUrl>https://github.com/PepperDash/epi-samsung-tizenWebsocket.git</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>Crestron; 4series</PackageTags>
+    <PackageOutputPath>..\output</PackageOutputPath>
+    <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
+    <PackageLicenseFile>LICENSE.md</PackageLicenseFile>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="..\LICENSE.md" Pack="true" PackagePath=""/>
+    <None Include="..\README.md" Pack="true" PackagePath=""/>
+  </ItemGroup>
+</Project>

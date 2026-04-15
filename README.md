@@ -1,6 +1,6 @@
-![PepperDash Essentials Pluign Logo](/images/essentials-plugin-blue.png)
+![PepperDash Essentials Plugin Logo](/images/essentials-plugin-blue.png)
 
-# Essentials Plugin Template (c) 2025
+# Samsung Tizen WebSocket Display Plugin
 
 ## License
 
@@ -8,87 +8,223 @@ Provided under MIT license
 
 ## Overview
 
-Fork this repo when creating a new plugin for Essentials. For more information about plugins, refer to the Essentials Wiki [Plugins](https://pepperdash.github.io/Essentials/docs/Plugins.html) article.
+PepperDash Essentials plugin for two-way control of Samsung Tizen displays over the WebSocket API (`samsung.remote.control` channel).
 
-This plugin provides two-way control of Samsung displays over the Samsung Tizen WebSocket API.
+Tested on Samsung QN65-QN990FFXZA. Should work with other Samsung Tizen models that expose the WebSocket API on port 8001 (insecure) or 8002 (secure/TLS).
 
-Status behavior note:
-* The Samsung `samsung.remote.control` WebSocket is treated as a command/session transport, not a `GenericCommunicationMonitor` transport.
-* Online state is controller-driven from WebSocket connection state.
-* Power, mute, volume, and source feedback are a mix of optimistic local state and any unsolicited Samsung events actually observed at runtime.
-* The plugin does not assume consumer Samsung TVs support explicit WebSocket getter commands for power, volume, mute, or source.
+### Key Features
 
-Core runtime classes:
-* `SamsungTizenWebsocketDeviceFactory`: creates Samsung devices for `type: "samsungTizenWebsocket"`
-* `SamsungTizenWebsocketController`: command/feedback controller and bridge link implementation
-* `SamsungTizenWebsocketConfig`: device properties configuration model
-* `SamsungTizenWebsocketBridgeJoinMap`: digital/analog/serial bridge join definitions
+- Raw TCP + manual WebSocket upgrade (works around Mono `ClientWebSocket` limitations on Crestron 4-Series)
+- Automatic Samsung pairing token management — tokens are persisted locally and updated on rotation
+- SSL/TLS support with self-signed certificate acceptance
+- Serialized writes via `SemaphoreSlim` to prevent Mono `SslStream` concurrency errors
+- Exponential backoff reconnection (2–30 seconds)
+- Power, volume, mute, and input routing
+- EISC bridge with configurable join map
+
+### Architecture
+
+| Class | Role |
+|---|---|
+| `SamsungTizenWebsocketFactory` | Creates devices for type `samsungTizenWebsocket` |
+| `SamsungTizenWebsocketController` | `TwoWayDisplayBase` controller — commands, feedback, bridge linking |
+| `SamsungTizenWebsocketProtocolBridge` | Raw TCP WebSocket transport, frame encoding/decoding, Samsung event handling |
+| `SamsungTizenWebsocketConfig` | Device properties configuration model |
+| `SamsungTizenWebsocketBridgeJoinMap` | Digital/analog/serial bridge join definitions |
 
 ## Device Configuration
 
-Factory expectations:
-* Device type name must be `samsungTizenWebsocket`
-* Preferred config uses `properties.control`
-* `properties.control.tcpSshProperties.address` is required when `control` is used
-* `properties.control.tcpSshProperties.port` defaults to `8002` when omitted
-* Legacy `properties.address` / `properties.port` are still accepted as fallback
+### Device Type
 
-Example Essentials device config:
+```
+"type": "samsungTizenWebsocket"
+```
+
+### Recommended Configuration
+
+Use `method: "https"` with port `8002` for secure WebSocket connections. This is the only mode confirmed to support Samsung pairing.
 
 ```json
 {
-	"key": "display-lobby-samsung",
-	"name": "Lobby Samsung Display",
-	"type": "samsungTizenWebsocket",
-	"group": "displays",
-	"properties": {
-		"control": {
-			"method": "https",
-			"tcpSshProperties": {
-				"address": "192.168.1.100",
-				"port": 8002,
-				"username": "optional",
-				"password": "optional",
-				"autoReconnect": true,
-				"autoReconnectIntervalMs": 10000
-			}
-		},
-		"pollIntervalMs": 5000,
-		"coolingTimeMs": 8000,
-		"warmingTimeMs": 10000,
-		"warningTimeoutMs": 60000,
-		"errorTimeoutMs": 120000,
-		"friendlyNames": [
-			{ "inputKey": "hdmi1", "name": "Teams Room PC" },
-			{ "inputKey": "displayport", "name": "Wall Plate", "hideInput": false }
-		]
-	}
+    "key": "display-1",
+    "name": "Suite 1 Display",
+    "type": "samsungTizenWebsocket",
+    "group": "displays",
+    "properties": {
+        "control": {
+            "method": "https",
+            "tcpSshProperties": {
+                "address": "192.168.1.100",
+                "port": 8002,
+                "autoReconnect": true,
+                "autoReconnectIntervalMs": 10000
+            }
+        },
+        "pollIntervalMs": 30000,
+        "coolingTimeMs": 8000,
+        "warmingTimeMs": 10000,
+        "warningTimeoutMs": 180000,
+        "errorTimeoutMs": 300000,
+        "friendlyNames": [
+            { "inputKey": "hdmi1", "name": "HDMI 1", "hideInput": false },
+            { "inputKey": "hdmi2", "name": "HDMI 2", "hideInput": false }
+        ]
+    }
 }
 ```
 
-Property reference:
+### Properties Reference
 
 | Property | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `control` | object | Preferred | n/a | Essentials control object. Use `method` plus `tcpSshProperties` for address, port, and credentials |
-| `control.method` | string | No | `https` behavior | Supported values: `http`, `https`, `ws`, `wss`. `http`/`ws` use insecure WebSocket, `https`/`wss` use secure WebSocket |
-| `control.tcpSshProperties.address` | string | Yes with `control` | n/a | IP address or hostname of the Samsung display |
+| `control.method` | string | Recommended | `https` behavior | `http`/`ws` = insecure (port 8001), `https`/`wss` = secure (port 8002) |
+| `control.tcpSshProperties.address` | string | Yes | — | IP address or hostname of the Samsung display |
 | `control.tcpSshProperties.port` | int | No | `8002` | Samsung Tizen WebSocket port |
-| `control.tcpSshProperties.username` | string | No | empty | Optional credential stored with the Essentials control config |
-| `control.tcpSshProperties.password` | string | No | empty | Optional credential stored with the Essentials control config |
-| `address` | string | Legacy fallback | n/a | Legacy top-level address. Used only when `control.tcpSshProperties.address` is not provided |
-| `port` | int | Legacy fallback | `8002` | Legacy top-level port. Used only when `control.tcpSshProperties.port` is not provided |
-| `pollIntervalMs` | long | No | `5000` | Poll cycle interval |
-| `coolingTimeMs` | uint | No | `8000` | Local cooldown timer used after power off |
-| `warmingTimeMs` | uint | No | `10000` | Local warmup timer used after power on |
-| `warningTimeoutMs` | long | No | `60000` | Warning threshold for delayed responses |
-| `errorTimeoutMs` | long | No | `120000` | Error threshold for delayed responses |
-| `friendlyNames` | array | No | empty | Optional input rename and hide rules keyed by source id |
+| `address` | string | Legacy fallback | — | Used only when `control.tcpSshProperties.address` is not provided |
+| `port` | int | Legacy fallback | `8002` | Used only when `control.tcpSshProperties.port` is not provided |
+| `pollIntervalMs` | long | No | `5000` | Status poll interval in milliseconds |
+| `coolingTimeMs` | uint | No | `8000` | Local cooldown timer after power off |
+| `warmingTimeMs` | uint | No | `10000` | Local warmup timer after power on |
+| `warningTimeoutMs` | long | No | `60000` | Warning threshold for response delays |
+| `errorTimeoutMs` | long | No | `120000` | Error threshold for response delays |
+| `friendlyNames` | array | No | `[]` | Input rename/hide rules. Keys: `hdmi1`–`hdmi4`, `displayport` |
 
-Connection notes:
-* The plugin still talks to Samsung over the Tizen WebSocket API.
-* `control.method` is used to determine whether the underlying WebSocket URI is built as `ws://` or `wss://`.
-* If no `control.method` is supplied, the plugin defaults to secure WebSocket behavior to preserve the previous implementation.
+### Control Method Behavior
+
+| Method | Port | WebSocket | SSL |
+|---|---|---|---|
+| `https` | 8002 | `wss://` | Yes (self-signed accepted) |
+| `wss` | 8002 | `wss://` | Yes |
+| `http` | 8001 | `ws://` | No |
+| `ws` | 8001 | `ws://` | No |
+| _(none)_ | 8002 | `wss://` | Yes (default) |
+
+> **Note:** Samsung pairing has only been confirmed working on the secure port (8002). Insecure connections (port 8001) may connect but Samsung may not present the pairing prompt.
+
+## Samsung Pairing & Token Management
+
+### First-Time Pairing
+
+On the first connection, the Samsung display must approve the client:
+
+1. The plugin connects via WebSocket and Samsung sends `ms.channel.unauthorized`
+2. The display shows an **Allow / Deny** popup on screen
+3. Once approved, Samsung sends `ms.channel.connect` with a pairing token
+4. The plugin extracts and persists the token automatically
+
+### Token File
+
+Tokens are stored in a shared JSON file on the processor filesystem:
+
+```
+\user\program{X}\samsung-tokens.json
+```
+
+Where `{X}` is the Essentials program slot number (e.g., `\user\program9\samsung-tokens.json` for slot 9).
+
+File format:
+
+```json
+{
+    "display-1": "40902035",
+    "display-2": "87654321"
+}
+```
+
+- Each key is the Essentials device key
+- Each value is the Samsung pairing token for that device
+- Multiple plugin instances share the same file with thread-safe read/write
+- Tokens are updated automatically when Samsung rotates them
+- No config file changes are required after initial pairing
+
+### Samsung Display Setup
+
+Before first connection, verify the following on the Samsung display:
+
+1. **Settings → General → Network → Device Connect Manager** → set to **Always notify**
+2. **Check the blocked device list** — if `ControlSystem` appears, remove it
+3. **The TV must be on the home screen** (not in Settings or an app) for the pairing popup to appear
+
+### Troubleshooting Pairing
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `ms.channel.unauthorized` then disconnect | No pairing popup shown | Ensure TV is on home screen, Device Connect Manager = "Always notify", check blocked list |
+| Token works once then fails | Samsung rotated the token | Token auto-updates — check `samsung-tokens.json` for the latest value |
+| `No Authorized` error on commands | Stale or missing token | Delete `samsung-tokens.json` and restart Essentials to re-pair |
+
+## Console Commands
+
+### Standard Essentials Commands
+
+```
+DEVCOMMSTATUS:9 display-1          -- Connection status
+DEVFB:9 display-1                  -- Current feedback values
+DEVMETHODS:9 display-1             -- Available methods
+DEVPROPS:9 display-1               -- Device properties
+DEVLIST:9                          -- All managed devices
+```
+
+### Device Commands (DEVJSON)
+
+Replace `9` with your program slot and `display-1` with your device key.
+
+#### Power
+
+```
+DEVJSON:9 {"deviceKey":"display-1","methodName":"PowerOn","params":[]}
+DEVJSON:9 {"deviceKey":"display-1","methodName":"PowerOff","params":[]}
+DEVJSON:9 {"deviceKey":"display-1","methodName":"PowerToggle","params":[]}
+```
+
+> **Note:** Power commands send `KEY_POWER` (toggle). `KEY_POWERON` and `KEY_POWEROFF` are not supported on all Samsung models.
+
+#### Input Selection
+
+```
+DEVJSON:9 {"deviceKey":"display-1","methodName":"InputHdmi1","params":[]}
+DEVJSON:9 {"deviceKey":"display-1","methodName":"InputHdmi2","params":[]}
+DEVJSON:9 {"deviceKey":"display-1","methodName":"InputHdmi3","params":[]}
+DEVJSON:9 {"deviceKey":"display-1","methodName":"InputHdmi4","params":[]}
+DEVJSON:9 {"deviceKey":"display-1","methodName":"InputDisplayPort","params":[]}
+```
+
+#### Volume & Mute
+
+```
+DEVJSON:9 {"deviceKey":"display-1","methodName":"VolumeUp","params":[false]}
+DEVJSON:9 {"deviceKey":"display-1","methodName":"VolumeDown","params":[false]}
+DEVJSON:9 {"deviceKey":"display-1","methodName":"MuteToggle","params":[]}
+```
+
+#### Send Arbitrary Key (Testing)
+
+Use `SendKey` to send any Samsung remote control key code for testing:
+
+```
+DEVJSON:9 {"deviceKey":"display-1","methodName":"SendKey","params":["KEY_POWER"]}
+DEVJSON:9 {"deviceKey":"display-1","methodName":"SendKey","params":["KEY_HDMI1"]}
+DEVJSON:9 {"deviceKey":"display-1","methodName":"SendKey","params":["KEY_SOURCE"]}
+DEVJSON:9 {"deviceKey":"display-1","methodName":"SendKey","params":["KEY_VOLUP"]}
+DEVJSON:9 {"deviceKey":"display-1","methodName":"SendKey","params":["KEY_MUTE"]}
+```
+
+Common Samsung key codes: `KEY_POWER`, `KEY_POWERON`, `KEY_POWEROFF`, `KEY_VOLUP`, `KEY_VOLDOWN`, `KEY_MUTE`, `KEY_HDMI`, `KEY_HDMI1`–`KEY_HDMI4`, `KEY_DISPLAYPORT`, `KEY_DVI`, `KEY_SOURCE`, `KEY_DTV`
+
+### Verbose Logging
+
+Enable verbose logging to see TX/RX WebSocket frames:
+
+```
+APPDEBUG:9 2
+```
+
+Log output includes:
+- `[VERB] TX: {...}` — JSON sent to the display
+- `[VERB] RX: {...}` — JSON received from the display
+- `[INFO] SendKey: KEY_xxx` — key code dispatched
+- `[INFO] Samsung pairing token received: xxxxx` — token updates
+- `[INFO] Connection state changed: Ready` — connection lifecycle
 
 ## Bridge Configuration
 
@@ -118,7 +254,7 @@ When a custom bridge map is supplied, the plugin applies it via `joinMapKey` thr
 
 | Join Name | Offset | Capability | Description |
 |---|---:|---|---|
-| `VolumeLevel` | 1 | ToFromSIMPL | Volume level (0-100) |
+| `VolumeLevel` | 1 | ToFromSIMPL | Volume level (0–100) |
 
 ### Serial Joins
 
@@ -127,109 +263,22 @@ When a custom bridge map is supplied, the plugin applies it via `joinMapKey` thr
 | `DeviceName` | 1 | ToSIMPL | Device name |
 | `CurrentSource` | 2 | ToSIMPL | Current source feedback |
 
-Supported current source values depend on Samsung API payloads, typically values such as `hdmi1`, `hdmi2`, `hdmi3`, `hdmi4`, and `displayport`.
+## Known Limitations
 
-Input-name customization:
-* `friendlyNames[].inputKey` supports `hdmi1`, `hdmi2`, `hdmi3`, `hdmi4`, and `displayport`
-* `friendlyNames[].name` overrides the bridge-reported input label
-* `friendlyNames[].hideInput` removes the input from the selectable input collection
-
-## V1 Implementation Status & Known Risks
-
-**Current Target:** Samsung QNxx-QN990FFXZA displays via Samsung Tizen WebSocket API  
-**V1 Features:** Power on/off · Input/source select · Volume/mute · Status polling · LAN discovery  
-**Timeline:** 6–7 weeks (phases 1–5)
-
-### Known Risks & Mitigations for Operators
-
-| Risk | Impact | Mitigation |
-|------|--------|-----------|
-| **Firmware incompatibility** | Commands may fail or produce unexpected responses if display firmware differs from tested version | Check Samsung firmware version before deployment; consult `.github/context/development-links.md` for supported versions. Report firmware mismatches in GitHub Issues. |
-| **WebSocket connection drops** | Device becomes unresponsive during use | Plugin implements exponential backoff reconnection (2–30s). Monitor "latency" telemetry in logs for persistent issues. |
-| **Auth token expiry** | Commands fail mid-session if display requires token re-authentication | Plugin handles token refresh automatically. If persistent auth failures occur, restart the Essentials service or manually reset display credentials. |
-| **Polling latency exceeds expectations** | Status updates (power, volume, input) may lag by 1–3 seconds | Polling interval is configurable (default 5s). Adjust `PollIntervalMs` in device config if tighter feedback required. |
-| **Consumer WebSocket status limits** | Real-time source, volume, mute, or power feedback may not reflect the panel unless Samsung emits usable unsolicited events | Treat WebSocket feedback as best-effort. For guaranteed telemetry, validate model-specific REST or UPnP paths before relying on two-way joins in production. |
-| **Port 8002 blocked by firewall** | Device cannot connect to display | Verify port 8002 is open between control system and display. Check network firewall rules and display settings for WebSocket service enablement. |
-| **Samsung API changes in new firmware** | Plugin may break on display firmware updates | Before updating display firmware, verify compatibility in GitHub Issues or contact support. We maintain a firmware compatibility matrix. |
-
-## Cloning Instructions
-
-After forking this repository into your own GitHub space, you can create a new repository using this one as the template.  Then you must install the necessary dependencies as indicated below.
+- **Power commands use `KEY_POWER` (toggle)** — `KEY_POWERON` / `KEY_POWEROFF` are not supported on all Samsung models. The plugin needs power state feedback to avoid toggling in the wrong direction.
+- **Input selection via key codes** — some Samsung models may not respond to `KEY_HDMI1` etc. Use `SendKey` to test which codes your model supports.
+- **Feedback is optimistic** — power, volume, mute, and source feedback are set locally on command send. Samsung consumer displays do not reliably emit status events over WebSocket.
+- **Token rotation** — Samsung rotates pairing tokens on each connection. The plugin handles this automatically but the display must remain accessible on the network.
 
 ## Dependencies
 
-The [Essentials](https://github.com/PepperDash/Essentials) libraries are required. They referenced via nuget. You must have nuget.exe installed and in the `PATH` environment variable to use the following command. Nuget.exe is available at [nuget.org](https://dist.nuget.org/win-x86-commandline/latest/nuget.exe).
+- [PepperDash Essentials](https://github.com/PepperDash/Essentials) (referenced via NuGet)
+- Crestron 4-Series processor (.NET Framework 4.7.2)
 
-### Installing Dependencies
-
-Dependencies will be automatically installed when
-
-### Instructions for Renaming Solution and Files
-
-See the Task List in Visual Studio for a guide on how to start using the template.  There is extensive inline documentation and examples as well.
-
-For renaming instructions in particular, see the XML `remarks` tags on class definitions
-
-## Build Instructions (PepperDash Internal) 
-
-## Generating Nuget Package
-
-A nuget package is automatically generated when the plugin is build. To modify the name and other details of the package, edit the following properties in the .csproj file:
-
-1. `PackageId` - This is the name that will be used to pull the package from Nuget once it's published
-2. `PackgeProjectUrl` - This should match the URL for the plugin repo
-3. `AssemblyTitle` - This is the dll file name that is will show on a processor when the plugin is loaded
-
-
-## Essentials User Commands
-
-Program slot for this test session: `9`
+## Build
 
 ```
-APIMETHODS:9                  Operator            (*) 
-APPDEBUGMESSAGE:9             Operator            (*) appdebug:P [0-10]: Sets the application's console debug message level
-APPDEBUGFILTER:9              Operator            (*) appdebug:P [0-10]: Sets the application's console debug message level
-APPDEBUGCLEAR:9               Operator            (*) appdebug:P [0-10]: Sets the application's console debug message level
-APPDEBUGLOG:9                 Operator            (*) appdebug:P [0-10]: Sets the application's console debug message level
-APPDEBUG:9                    Operator            (*) appdebug:P [0-10]: Sets the application's console debug message level
-APPDEBUGCLEAR:9               Operator            (*) appdebugclear:P Clears the current custom log
-APPDEBUGFILTER:9              Operator            (*) appdebugfilter [params]
-APPDEBUGLOG:9                 Operator            (*) appdebuglog:P [all] Use "all" for full log.
-APPDEBUGMESSAGE:9             Operator            (*) Writes message to log
-DELETESECRET:9                Administrator       (*) Deletes secret from secrest provider
-DEVCOMMSTATUS:9               Operator            (*) Lists the communication status of all devices
-DEVFB:9                       Operator            (*) Lists current feedbacks
-DEVJSON:9                     Operator            (*) 
-DEVLIST:9                     Operator            (*) Lists current managed devices
-DEVMETHODS:9                  Operator            (*) 
-DEVPROPS:9                    Operator            (*) 
-DEVSIMRECEIVE:9               Operator            (*) Simulates incoming data on a com device
-DISABLEALLSTREAMDEBUG:9          Operator            (*) disables stream debugging on all devices
-DONOTLOADONNEXTBOOT:9          Operator            (*) donotloadonnextboot:P [true/false]: Should the application load on next boot
-GETJOINMAPMARKDOWN:9          Operator            (*) map(s) for bridge or device on bridge [brKey [devKey]]
-GETJOINMAP:9                  Operator            (*) map(s) for bridge or device on bridge [brKey [devKey]]
-GETJOINMAPMARKDOWN:9          Operator            (*) generate markdown of map(s) for bridge or device on bridge [brKey [devKey]]
-GETROUTINGPORTS:9             Operator            (*) Reports all routing ports, if any.  Requires a device key
-GETTYPES:9                    Operator            (*) Gets the device types that can be built. Accepts a filter string.
-LISTTIELINES:9                Operator            (*) Prints out all tie lines
-PORTALINFO:9                  Operator            (*) Shows portal URLS from configuration
-REPORTVERSIONS:9              Operator            (*) Reports the versions of the loaded assemblies
-SECRETPROVIDERINFO:9          Administrator       (*) Return data about secrets provider
-SECRETPROVIDERLIST:9          Administrator       (*) Return list of all valid secrets providers
-SETDEVICESTREAMDEBUG:9          Operator            (*) set comm debug [deviceKey] [off/rx/tx/both] ([minutes])
-SETSECRET:9                   Operator            (*) Adds secret to secrets provider
-SHOWCONFIG:9                  Operator            (*) Shows the current running merged config
-UPDATESECRET:9                Administrator       (*) Updates secret in secrets provider
+dotnet build epi-samsung-tizenWebsocket.4Series.sln
 ```
 
-### DEVJSON Commands
-
-```
-DEVCOMMSTATUS:9 display-1
-DEVJSON:9 {"deviceKey":"display-1","methodName":"SendKey","params":["KEY_HDMI1"]}
-DEVJSON:9 {"deviceKey":"display-1","methodName":"SendKey","params":["KEY_HDMI2"]}
-DEVJSON:9 {"deviceKey":"display-1","methodName":"SendKey","params":["KEY_HDMI"]}
-DEVJSON:9 {"deviceKey":"display-1","methodName":"SendKey","params":["KEY_SOURCE"]}
-DEVJSON:9 {"deviceKey":"display-1","methodName":"SendKey","params":["KEY_DTV"]}
-DEVFB:9 display-1
-```
+Output: `output/epi-samsung-tizenWebsocket.4Series.1.0.0-local.cplz`

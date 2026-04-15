@@ -53,7 +53,9 @@
 					"errorTimeoutMs": 300000,
 					"friendlyNames": [
 						{ "inputKey": "hdmi1", "name": "HDMI 1", "hideInput": false },
-						{ "inputKey": "hdmi2", "name": "HDMI 2", "hideInput": false }
+						{ "inputKey": "hdmi2", "name": "HDMI 2", "hideInput": false },
+						{ "inputKey": "hdmi3", "name": "HDMI 3", "hideInput": false },
+						{ "inputKey": "hdmi4", "name": "HDMI 4", "hideInput": false }
 					]
 				}
 			},

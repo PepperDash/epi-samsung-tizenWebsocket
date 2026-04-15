@@ -282,3 +282,117 @@ dotnet build epi-samsung-tizenWebsocket.4Series.sln
 ```
 
 Output: `output/epi-samsung-tizenWebsocket.4Series.1.0.0-local.cplz`
+<!-- START Minimum Essentials Framework Versions -->
+### Minimum Essentials Framework Versions
+
+- 2.24.0
+<!-- END Minimum Essentials Framework Versions -->
+<!-- START Config Example -->
+### Config Example
+
+```json
+{
+    "key": "GeneratedKey",
+    "uid": 1,
+    "name": "GeneratedName",
+    "type": "samsungTizenWebsocket",
+    "group": "Group",
+    "properties": {
+        "control": "SampleValue",
+        "Address": "SampleString",
+        "Port": 0,
+        "pollIntervalMs": 0,
+        "warningTimeoutMs": 0,
+        "errorTimeoutMs": 0,
+        "coolingTimeMs": "SampleValue",
+        "warmingTimeMs": "SampleValue",
+        "friendlyNames": [
+            {
+                "inputKey": "SampleString",
+                "name": "SampleString",
+                "hideInput": true
+            }
+        ]
+    }
+}
+```
+<!-- END Config Example -->
+<!-- START Supported Types -->
+### Supported Types
+
+- samsungTizenWebsocket
+<!-- END Supported Types -->
+<!-- START Join Maps -->
+
+<!-- END Join Maps -->
+<!-- START Interfaces Implemented -->
+### Interfaces Implemented
+
+- IBasicVolumeWithFeedback
+- IInputHdmi1
+- IInputHdmi2
+- IInputHdmi3
+- IInputHdmi4
+- IInputDisplayPort1
+- IBridgeAdvanced
+- IHasInputs<string>
+- IBasicVideoMuteWithFeedback
+- IWarmingCooling
+- IDisposable
+- ISelectableItems<string>
+<!-- END Interfaces Implemented -->
+<!-- START Base Classes -->
+### Base Classes
+
+- TwoWayDisplayBase
+- DisplayControllerJoinMap
+<!-- END Base Classes -->
+<!-- START Public Methods -->
+### Public Methods
+
+- public void LinkToApi(BasicTriList trilist, uint joinStart, string joinMapKey, EiscApiAdvanced bridge)
+- public void VolumeUp(bool pressRelease)
+- public void VolumeDown(bool pressRelease)
+- public void MuteToggle()
+- public void MuteOn()
+- public void MuteOff()
+- public void SetVolume(ushort level)
+- public void VideoMuteToggle()
+- public void VideoMuteOn()
+- public void VideoMuteOff()
+- public void SendKey(string keyCode)
+- public void InputHdmi1()
+- public void InputHdmi2()
+- public void InputHdmi3()
+- public void InputHdmi4()
+- public void InputDisplayPort()
+- public void InputDisplayPort1()
+- public void Poll()
+- public string GetAddress()
+- public int GetPort()
+- public eControlMethod GetControlMethod()
+- public bool UseSecureWebSocket()
+- public void Clear()
+- public void LoadToken()
+- public void Dispose()
+- public void Select()
+<!-- END Public Methods -->
+<!-- START Bool Feedbacks -->
+### Bool Feedbacks
+
+- IsMutedFeedback
+- IsOnlineFeedback
+- VideoMuteIsOn
+- MuteFeedback
+<!-- END Bool Feedbacks -->
+<!-- START Int Feedbacks -->
+### Int Feedbacks
+
+- InputNumberFeedback
+- VolumeLevelFeedback
+<!-- END Int Feedbacks -->
+<!-- START String Feedbacks -->
+### String Feedbacks
+
+- CurrentSourceFeedback
+<!-- END String Feedbacks -->

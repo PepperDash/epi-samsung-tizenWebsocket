@@ -44,11 +44,12 @@ namespace PepperDash.Essentials.Plugin.Samsung.TizenWebsocket.Protocol
         private ConnectionState connectionState = ConnectionState.Disconnected;
         private int messageIdCounter = 1;
         private int reconnectAttempts = 0;
-        private const int maxReconnectAttempts = 10;
         private const int baseReconnectDelayMs = 2000;
-        private const int maxReconnectDelayMs = 30000;
+        private const int maxReconnectDelayMs = 60000;
         private const int unauthorizedReconnectDelayMs = 15000;
-        private const string ClientName = "ControlSystem";
+        private volatile bool closeFrameReceived;
+        private volatile bool reconnectEnabled = true;
+        private const string clientName = "ControlSystem";
         private static readonly object tokenFileLock = new object();
         private static readonly string tokenFilePath;
         private static readonly string tokenDirectoryPath;
@@ -176,6 +177,7 @@ namespace PepperDash.Essentials.Plugin.Samsung.TizenWebsocket.Protocol
                     return false;
                 }
 
+                reconnectEnabled = true;
                 SetConnectionState(ConnectionState.Connecting);
 
                 // Use a short-lived CTS for TCP connect + upgrade only;
@@ -200,7 +202,8 @@ namespace PepperDash.Essentials.Plugin.Samsung.TizenWebsocket.Protocol
                     var upgradeResponse = await PerformWebSocketUpgradeAsync(networkStream, connectCts.Token).ConfigureAwait(false);
                     if (!upgradeResponse)
                     {
-                        await DisconnectAsync().ConfigureAwait(false);
+                        CleanupConnection();
+                        SetConnectionState(ConnectionState.Disconnected);
                         return false;
                     }
 
@@ -210,7 +213,7 @@ namespace PepperDash.Essentials.Plugin.Samsung.TizenWebsocket.Protocol
                 cancellationTokenSource = new CancellationTokenSource();
 
                 SetConnectionState(ConnectionState.Connected);
-                reconnectAttempts = 0;
+                closeFrameReceived = false;
 
                 // Start receive thread BEFORE sending any messages
                 receiveThread = new Thread(ReceiveLoopRaw) { IsBackground = true, Name = $"{key}-Receive" };
@@ -221,7 +224,8 @@ namespace PepperDash.Essentials.Plugin.Samsung.TizenWebsocket.Protocol
             catch (Exception ex)
             {
                 OnError?.Invoke(this, ex);
-                await DisconnectAsync().ConfigureAwait(false);
+                CleanupConnection();
+                SetConnectionState(ConnectionState.Disconnected);
                 return false;
             }
         }
@@ -235,7 +239,7 @@ namespace PepperDash.Essentials.Plugin.Samsung.TizenWebsocket.Protocol
                 var keyBytes = new byte[16];
                 Array.Copy(guidBytes, 0, keyBytes, 0, 16);
                 var key = Convert.ToBase64String(keyBytes);
-                var encodedClientName = Uri.EscapeDataString(Convert.ToBase64String(Encoding.UTF8.GetBytes(ClientName)));
+                var encodedClientName = Uri.EscapeDataString(Convert.ToBase64String(Encoding.UTF8.GetBytes(clientName)));
 
                 // Build upgrade request — include token if we have one from a previous pairing
                 var path = $"/api/v2/channels/samsung.remote.control?name={encodedClientName}";
@@ -380,23 +384,36 @@ namespace PepperDash.Essentials.Plugin.Samsung.TizenWebsocket.Protocol
         {
             try
             {
+                reconnectEnabled = false;
                 if (connectionState != ConnectionState.Disconnected)
                 {
                     SetConnectionState(ConnectionState.Disconnecting);
-
-                    cancellationTokenSource?.Cancel();
-                    cancellationTokenSource?.Dispose();
-
-                    sslStream?.Dispose();
-                    networkStream?.Dispose();
-                    tcpClient?.Dispose();
-
+                    CleanupConnection();
                     SetConnectionState(ConnectionState.Disconnected);
                 }
             }
             catch (Exception)
             {
             }
+        }
+
+        /// <summary>
+        /// Disposes TCP/SSL/stream resources without changing connection state or reconnect flag.
+        /// </summary>
+        private void CleanupConnection()
+        {
+            try { cancellationTokenSource?.Cancel(); } catch { }
+            try { cancellationTokenSource?.Dispose(); } catch { }
+            cancellationTokenSource = null;
+
+            try { sslStream?.Dispose(); } catch { }
+            sslStream = null;
+
+            // When secure, networkStream references sslStream (already disposed above)
+            networkStream = null;
+
+            try { tcpClient?.Dispose(); } catch { }
+            tcpClient = null;
         }
 
         public void Dispose()
@@ -527,6 +544,10 @@ namespace PepperDash.Essentials.Plugin.Samsung.TizenWebsocket.Protocol
                                 ProcessMessage(frameData);
                             }
                         }
+
+                        // Server sent a close frame — exit receive loop without reading again
+                        if (closeFrameReceived)
+                            break;
                     }
                     catch (OperationCanceledException)
                     {
@@ -577,6 +598,7 @@ namespace PepperDash.Essentials.Plugin.Samsung.TizenWebsocket.Protocol
                 // Check for close frame (opcode 0x08)
                 if (opcode == 0x08)
                 {
+                    closeFrameReceived = true;
                     // Attempt to decode close status/reason for diagnostics.
                     try
                     {
@@ -612,7 +634,16 @@ namespace PepperDash.Essentials.Plugin.Samsung.TizenWebsocket.Protocol
 
                             var closeCode = (closePayloadBytes[0] << 8) | closePayloadBytes[1];
                             var closeReason = closePayloadLen > 2 ? Encoding.UTF8.GetString(closePayloadBytes, 2, closePayloadLen - 2) : string.Empty;
-                            OnError?.Invoke(this, new InvalidOperationException(string.Format("Server closed websocket: code={0}, reason='{1}'", closeCode, closeReason)));
+
+                            // 'notack' = display rejected or is powered off — expected, log at info level
+                            if (string.Equals(closeReason, "notack", StringComparison.OrdinalIgnoreCase))
+                            {
+                                OnInfoMessage?.Invoke(this, string.Format("Display closed connection (code={0}, reason='{1}')", closeCode, closeReason));
+                            }
+                            else
+                            {
+                                OnError?.Invoke(this, new InvalidOperationException(string.Format("Server closed websocket: code={0}, reason='{1}'", closeCode, closeReason)));
+                            }
                         }
                         else
                         {
@@ -734,6 +765,7 @@ namespace PepperDash.Essentials.Plugin.Samsung.TizenWebsocket.Protocol
                     }
                     SetConnectionState(ConnectionState.Ready);
                     lastDisconnectWasUnauthorized = false;
+                    reconnectAttempts = 0;
                     OnResponseReceived?.Invoke(this, new SamsungResponseMessage { Event = eventName });
                     return;
                 }
@@ -767,14 +799,14 @@ namespace PepperDash.Essentials.Plugin.Samsung.TizenWebsocket.Protocol
 
         private async Task HandleDisconnectAsync()
         {
+            CleanupConnection();
             SetConnectionState(ConnectionState.Disconnected);
 
-            // Attempt reconnection with exponential backoff
-            if (reconnectAttempts < maxReconnectAttempts)
+            // Reconnect with exponential backoff — never give up
+            while (!isDisposed && reconnectEnabled)
             {
                 reconnectAttempts++;
 
-                // Use longer delay when waiting for user to approve pairing on TV
                 int delayMs;
                 if (lastDisconnectWasUnauthorized)
                 {
@@ -782,14 +814,21 @@ namespace PepperDash.Essentials.Plugin.Samsung.TizenWebsocket.Protocol
                 }
                 else
                 {
-                    delayMs = Math.Min(baseReconnectDelayMs * (int)Math.Pow(2, reconnectAttempts - 1), maxReconnectDelayMs);
+                    // Cap the exponent to prevent overflow: 2^6 * 2000 = 128000 → clamped to maxReconnectDelayMs
+                    var exponent = Math.Min(reconnectAttempts - 1, 6);
+                    delayMs = Math.Min(baseReconnectDelayMs * (int)Math.Pow(2, exponent), maxReconnectDelayMs);
                 }
 
+                OnInfoMessage?.Invoke(this, string.Format("Reconnecting in {0}s (attempt {1})...", delayMs / 1000, reconnectAttempts));
                 await Task.Delay(delayMs).ConfigureAwait(false);
 
-                if (!isDisposed)
+                if (isDisposed || !reconnectEnabled) break;
+
+                var connected = await ConnectAsync().ConfigureAwait(false);
+                if (connected)
                 {
-                    await ConnectAsync().ConfigureAwait(false);
+                    // New receive loop started — it will call HandleDisconnectAsync on next failure
+                    return;
                 }
             }
         }

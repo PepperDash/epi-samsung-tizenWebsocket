@@ -358,3 +358,6 @@ MigrationBackup/
 *.projectinfo
 *.suo
 .DS_Store
+
+# Samsung pairing tokens (local secrets)
+python-scripts/samsung-tokens.json

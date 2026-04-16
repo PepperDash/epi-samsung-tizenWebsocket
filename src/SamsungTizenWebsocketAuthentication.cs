@@ -1,7 +1,7 @@
 using System;
 using System.Threading.Tasks;
 
-namespace PepperDash.Essentials.Plugin.Samsung.TizenWebsocket.Protocol
+namespace PepperDash.Essentials.Plugins.Samsung.TizenWebsocket.Protocol
 {
     /// <summary>
     /// Handles Samsung WebSocket authentication flow.

@@ -8,7 +8,7 @@ This guide applies to all Samsung QNxx-QN990FFXZA plugin work in this repository
 
 ## Naming Conventions
 
-- **Namespace**: `PepperDash.Essentials.Plugin.Samsung.TizenWebsocket`
+- **Namespace**: `PepperDash.Essentials.Plugins.Samsung.TizenWebsocket`
 - **Class names**: Use PascalCase with domain clarity
   - Device class: `SamsungTizenWebsocketDevice`
   - Factory: `SamsungTizenWebsocketFactory`
@@ -19,7 +19,7 @@ This guide applies to all Samsung QNxx-QN990FFXZA plugin work in this repository
   - `SendPowerOn()`, `SendSourceSelect(sourceId)`, `QueryDeviceStatus()`
   - Feedback setters: `SetPowerStatus(isOn)`, `SetVolumeLevel(level)`
 - **File structure**: One class per file; match class name
-- **Plugin package ID**: `PepperDash.Essentials.Plugin.Samsung.TizenWebsocket`
+- **Plugin package ID**: `PepperDash.Essentials.Plugins.Samsung.TizenWebsocket`
 
 ## File Layout
 

@@ -11,7 +11,7 @@ using PepperDash.Essentials.Core.Bridges;
 using PepperDash.Essentials.Core.DeviceTypeInterfaces;
 using PepperDash.Essentials.Core.Queues;
 using PepperDash.Essentials.Devices.Displays;
-using PepperDash.Essentials.Plugin.Samsung.TizenWebsocket.Protocol;
+using PepperDash.Essentials.Plugins.Samsung.TizenWebsocket.Protocol;
 using TwoWayDisplayBase = PepperDash.Essentials.Devices.Common.Displays.TwoWayDisplayBase;
 
 namespace PepperDash.Essentials.Plugin

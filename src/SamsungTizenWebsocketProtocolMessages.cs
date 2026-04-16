@@ -2,7 +2,7 @@ using System;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
-namespace PepperDash.Essentials.Plugin.Samsung.TizenWebsocket.Protocol
+namespace PepperDash.Essentials.Plugins.Samsung.TizenWebsocket.Protocol
 {
     /// <summary>
     /// Represents a command message sent to the Samsung display.

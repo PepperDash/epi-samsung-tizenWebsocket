@@ -12,7 +12,7 @@ using System.Threading.Tasks;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
-namespace PepperDash.Essentials.Plugin.Samsung.TizenWebsocket.Protocol
+namespace PepperDash.Essentials.Plugins.Samsung.TizenWebsocket.Protocol
 {
     /// <summary>
     /// Manages WebSocket connection to Samsung display and handles protocol-level communication.

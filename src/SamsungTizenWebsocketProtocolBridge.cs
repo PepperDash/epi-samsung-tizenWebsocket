@@ -366,7 +366,11 @@ namespace PepperDash.Essentials.Plugins.Samsung.TizenWebsocket.Protocol
         /// </summary>
         public async void SendKey(string cmd)
         {
-            if (!IsConnected) return;
+            if (!IsConnected)
+            {
+                OnInfoMessage?.Invoke(this, string.Format("SendKey({0}) dropped — not connected (state={1})", cmd, connectionState));
+                return;
+            }
             try
             {
                 await SendCommandAsync(SamsungTizenCommands.RemoteControlMethod, cmd).ConfigureAwait(false);

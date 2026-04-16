@@ -152,8 +152,8 @@ namespace PepperDash.Essentials.Plugin
 			this.LogInformation("Linking to Bridge Type {type}", GetType().Name);
 
 			// Serial
-			trilist.SetString(joinMap.DeviceName.JoinNumber, Name);
-			CurrentSourceFeedback.LinkInputSig(trilist.StringInput[joinMap.CurrentSource.JoinNumber]);
+			trilist.SetString(joinMap.Name.JoinNumber, Name);
+			//CurrentSourceFeedback.LinkInputSig(trilist.StringInput[joinMap.CurrentSource.JoinNumber]);
 
 			// Power
 			trilist.SetSigTrueAction(joinMap.PowerOff.JoinNumber, PowerOff);
@@ -162,21 +162,15 @@ namespace PepperDash.Essentials.Plugin
 			PowerIsOnFeedback.LinkComplementInputSig(trilist.BooleanInput[joinMap.PowerOff.JoinNumber]);
 
 			// Mute
-			trilist.SetSigTrueAction(joinMap.MuteToggle.JoinNumber, MuteToggle);
-			IsMutedFeedback.LinkInputSig(trilist.BooleanInput[joinMap.MuteToggle.JoinNumber]);
+			trilist.SetSigTrueAction(joinMap.VolumeMute.JoinNumber, MuteToggle);
+			IsMutedFeedback.LinkInputSig(trilist.BooleanInput[joinMap.VolumeMute.JoinNumber]);
 
 			// Volume
 			trilist.SetSigTrueAction(joinMap.VolumeUp.JoinNumber, () => VolumeUp(false));
 			trilist.SetSigTrueAction(joinMap.VolumeDown.JoinNumber, () => VolumeDown(false));
 			VolumeLevelFeedback.LinkInputSig(trilist.UShortInput[joinMap.VolumeLevel.JoinNumber]);
 
-			// Inputs
-			trilist.SetSigTrueAction(joinMap.InputHdmi1.JoinNumber, InputHdmi1);
-			trilist.SetSigTrueAction(joinMap.InputHdmi2.JoinNumber, InputHdmi2);
-			trilist.SetSigTrueAction(joinMap.InputHdmi3.JoinNumber, InputHdmi3);
-			trilist.SetSigTrueAction(joinMap.InputHdmi4.JoinNumber, InputHdmi4);
-			trilist.SetSigTrueAction(joinMap.InputDisplayPort.JoinNumber, InputDisplayPort);
-
+			// Inputs (digital select, digital feedback, names)
 			for (var i = 0; i < InputPorts.Count; i++)
 			{
 				var inputIndex = i;
@@ -190,7 +184,7 @@ namespace PepperDash.Essentials.Plugin
 				});
 
 				var inputName = input.Key;
-				if (Inputs?.Items != null && input.FeedbackMatchObject is string sourceKey && Inputs.Items.TryGetValue(sourceKey, out var selectableItem))
+				if (Inputs?.Items != null && input.FeedbackMatchObject is string fbMatch && Inputs.Items.TryGetValue(fbMatch, out var selectableItem))
 				{
 					inputName = selectableItem.Name;
 				}
@@ -199,7 +193,7 @@ namespace PepperDash.Essentials.Plugin
 
 				if (InputFeedback != null && inputIndex < InputFeedback.Count)
 				{
-					InputFeedback[inputIndex].LinkInputSig(trilist.BooleanInput[(ushort)(joinMap.InputSelectOffset.JoinNumber + inputIndex)]);
+					InputFeedback[inputIndex].LinkInputSig(trilist.BooleanInput[joinMap.InputSelectOffset.JoinNumber + (uint)inputIndex]);
 				}
 			}
 
@@ -217,7 +211,7 @@ namespace PepperDash.Essentials.Plugin
 			trilist.OnlineStatusChange += (o, a) =>
 			{
 				if (!a.DeviceOnLine) return;
-				trilist.SetString(joinMap.DeviceName.JoinNumber, Name);
+				trilist.SetString(joinMap.Name.JoinNumber, Name);
 				UpdateFeedbacks();
 
 				for (var i = 0; i < InputPorts.Count; i++)

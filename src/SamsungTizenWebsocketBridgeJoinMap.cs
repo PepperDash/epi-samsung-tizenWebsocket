@@ -13,6 +13,11 @@ namespace PepperDash.Essentials.Plugin
 		#endregion
 
 
+		#region Analog
+
+		#endregion
+
+
 		#region Serial
 
 

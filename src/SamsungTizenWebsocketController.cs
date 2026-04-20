@@ -11,6 +11,7 @@ using PepperDash.Essentials.Core.Bridges;
 using PepperDash.Essentials.Core.DeviceTypeInterfaces;
 using PepperDash.Essentials.Core.Queues;
 using PepperDash.Essentials.Devices.Displays;
+using PepperDash.Essentials.Plugins.Samsung.TizenWebsocket;
 using PepperDash.Essentials.Plugins.Samsung.TizenWebsocket.Protocol;
 using TwoWayDisplayBase = PepperDash.Essentials.Devices.Common.Displays.TwoWayDisplayBase;
 
@@ -28,6 +29,7 @@ namespace PepperDash.Essentials.Plugin
 		private readonly GenericQueue receiveQueue;
 		private readonly SamsungTizenWebsocketProtocolBridge protocolBridge;
 		private readonly SamsungTizenWebsocketAuthentication auth;
+		private readonly SamsungTizenUpnpClient upnpClient;
 		private Timer pollTimer;
 		private Timer warmupTimer;
 		private Timer cooldownTimer;
@@ -38,23 +40,17 @@ namespace PepperDash.Essentials.Plugin
 
 		// Device state backing fields.
 		// Feedback strategy:
-		//   Optimistic  — set locally on command send; may be corrected if a real Samsung event arrives later.
-		//                 Joins: mute (IsMutedFeedback), volume-delta (VolumeLevelFeedback), source (CurrentSourceFeedback).
-		//   Event-driven — updated from unsolicited Samsung WebSocket messages parsed in ProcessFeedbackMessage.
-		//                  Joins: power (PowerIsOnFeedback)*, source (CurrentSourceFeedback)*, mute (IsMutedFeedback)*.
-		//                  * only when the display emits the relevant event; not guaranteed on all QN firmware.
-		private bool powerIsOn;      // Event-driven when Samsung emits power event; otherwise warmer/cooldown timer
-		private bool isMuted;        // Optimistic (flipped on MuteToggle); corrected by TryApplyMute if event arrives
+		//   Volume/Mute — UPnP SOAP is authoritative. SetVolume/SetMute send SOAP commands;
+		//                  GetVolume/GetMute poll on timer for real feedback.
+		//                  WebSocket events can still correct state if received.
+		//   Power       — Event-driven from WebSocket + warm/cool timers.
+		//   Source      — Optimistic (set on input command); corrected by WebSocket event if received.
+		private bool powerIsOn;
+		private bool isMuted;
 		private bool isWarmingUp;
 		private bool isCoolingDown;
-		private int volumeLevel;     // Optimistic (±1 on key); corrected by TryApplyVolume if event arrives
-		private string currentSource; // Optimistic (set in SendInputCommand); corrected by TryApplySource if event arrives
-
-		// Volume ramp state — used when SetVolume targets an absolute level via sequential key presses.
-		private int targetVolumeLevel;
-		private Timer volumeRampTimer;
-		private readonly object volumeRampLock = new object();
-		private const int VolumeRampIntervalMs = 150;
+		private int volumeLevel;
+		private string currentSource;
 
 		#region Feedbacks
 
@@ -100,6 +96,11 @@ namespace PepperDash.Essentials.Plugin
 			protocolBridge = new SamsungTizenWebsocketProtocolBridge(key, config.GetAddress(), config.GetPort(), config.UseSecureWebSocket());
 			protocolBridge.LoadToken();
 			auth = new SamsungTizenWebsocketAuthentication(key, protocolBridge);
+
+			upnpClient = new SamsungTizenUpnpClient(config.GetAddress(), config.UpnpPort);
+			upnpClient.OnInfoMessage += (s, msg) => this.LogInformation(msg);
+			upnpClient.OnVerboseMessage += (s, msg) => this.LogVerbose(msg);
+			upnpClient.OnError += (s, ex) => this.LogWarning("UPnP error: {message}", ex.Message);
 
 			IsMutedFeedback = new BoolFeedback("mute", () => isMuted);
 			IsOnlineFeedback = new BoolFeedback("online", () => protocolBridge.IsConnected);
@@ -303,74 +304,72 @@ namespace PepperDash.Essentials.Plugin
 		#region Volume
 
 		/// <summary>
-		/// Steps volume up. Sends KEY_VOLUP, then increments <c>volumeLevel</c> by 1 optimistically.
-		/// If the display emits a volume event, <see cref="TryApplyVolume"/> will correct to the real value.
+		/// Steps volume up by 1 via UPnP SOAP: reads current level, sends SetVolume(current + 1).
+		/// Updates local state optimistically; next poll will confirm.
 		/// </summary>
 		public void VolumeUp(bool pressRelease)
 		{
 			if (pressRelease) return;
-			StopVolumeRamp();
-			protocolBridge.SendKey(SamsungTizenCommands.KeyVolUp);
-			SetLocalVolume(volumeLevel + 1);
+			var newLevel = Math.Min(100, volumeLevel + 1);
+			if (upnpClient.SetVolume(newLevel))
+				SetLocalVolume(newLevel);
 		}
 
 		/// <summary>
-		/// Steps volume down. Sends KEY_VOLDOWN, then decrements <c>volumeLevel</c> by 1 optimistically.
-		/// If the display emits a volume event, <see cref="TryApplyVolume"/> will correct to the real value.
+		/// Steps volume down by 1 via UPnP SOAP: sends SetVolume(current - 1).
+		/// Updates local state optimistically; next poll will confirm.
 		/// </summary>
 		public void VolumeDown(bool pressRelease)
 		{
 			if (pressRelease) return;
-			StopVolumeRamp();
-			protocolBridge.SendKey(SamsungTizenCommands.KeyVolDown);
-			SetLocalVolume(volumeLevel - 1);
+			var newLevel = Math.Max(0, volumeLevel - 1);
+			if (upnpClient.SetVolume(newLevel))
+				SetLocalVolume(newLevel);
 		}
 
 		/// <summary>
-		/// Toggles mute. Sends the KEY_MUTE key, then flips <c>isMuted</c> optimistically.
-		/// If the display emits a mute-state event, <see cref="TryApplyMute"/> will correct the value.
+		/// Toggles mute via UPnP SOAP SetMute.
 		/// </summary>
 		public void MuteToggle()
 		{
-			protocolBridge.SendKey(SamsungTizenCommands.KeyMute);
-			isMuted = !isMuted;
-			IsMutedFeedback.FireUpdate();
+			var newMute = !isMuted;
+			if (upnpClient.SetMute(newMute))
+			{
+				isMuted = newMute;
+				IsMutedFeedback.FireUpdate();
+			}
 		}
 
 		public void MuteOn()
 		{
-			if (!isMuted)
-				MuteToggle();
+			if (upnpClient.SetMute(true))
+			{
+				isMuted = true;
+				IsMutedFeedback.FireUpdate();
+			}
 		}
 
 		public void MuteOff()
 		{
-			if (isMuted)
-				MuteToggle();
+			if (upnpClient.SetMute(false))
+			{
+				isMuted = false;
+				IsMutedFeedback.FireUpdate();
+			}
 		}
 
 		/// <summary>
-		/// Sets volume to an absolute level. Accepts 0-65535 from the SIMPL analog join,
-		/// scales to 0-100 for the Samsung display, and ramps via sequential KEY_VOLUP/KEY_VOLDOWN
-		/// key presses because the Samsung WebSocket remote-control API does not expose a
-		/// direct set-volume command.
+		/// Sets volume to an absolute level via UPnP SOAP SetVolume.
+		/// Accepts 0-65535 from the SIMPL analog join, scales to 0-100.
 		/// </summary>
 		public void SetVolume(ushort level)
 		{
 			var scaledLevel = ScaleVolumeFromAnalog(level);
+			if (volumeLevel == scaledLevel)
+				return;
 
-			lock (volumeRampLock)
-			{
-				targetVolumeLevel = scaledLevel;
-
-				if (volumeLevel == targetVolumeLevel)
-					return;
-
-				if (volumeRampTimer == null)
-				{
-					volumeRampTimer = new Timer(VolumeRampCallback, null, 0, VolumeRampIntervalMs);
-				}
-			}
+			if (upnpClient.SetVolume(scaledLevel))
+				SetLocalVolume(scaledLevel);
 		}
 
 		private void SetLocalVolume(int level)
@@ -381,39 +380,6 @@ namespace PepperDash.Essentials.Plugin
 
 			volumeLevel = clamped;
 			VolumeLevelFeedback.FireUpdate();
-		}
-
-		private void VolumeRampCallback(object state)
-		{
-			lock (volumeRampLock)
-			{
-				if (volumeLevel == targetVolumeLevel)
-				{
-					volumeRampTimer?.Dispose();
-					volumeRampTimer = null;
-					return;
-				}
-
-				if (volumeLevel < targetVolumeLevel)
-				{
-					protocolBridge.SendKey(SamsungTizenCommands.KeyVolUp);
-					SetLocalVolume(volumeLevel + 1);
-				}
-				else
-				{
-					protocolBridge.SendKey(SamsungTizenCommands.KeyVolDown);
-					SetLocalVolume(volumeLevel - 1);
-				}
-			}
-		}
-
-		private void StopVolumeRamp()
-		{
-			lock (volumeRampLock)
-			{
-				volumeRampTimer?.Dispose();
-				volumeRampTimer = null;
-			}
 		}
 
 		private static int ScaleVolumeToFeedback(int level)
@@ -572,15 +538,9 @@ namespace PepperDash.Essentials.Plugin
 		#region Polling
 
 		/// <summary>
-		/// Maintains the session lifecycle for the Samsung remote-control WebSocket.
-		/// Consumer Samsung displays do not expose reliable getters for power, volume, mute, or source
-		/// on the <c>samsung.remote.control</c> channel, so polling is limited to token refresh and
-		/// connection-state maintenance. Feedback accuracy relies on:
-		/// <list type="bullet">
-		///   <item><term>Optimistic local state</term><description>set immediately on mute, volume, and source commands.</description></item>
-		///   <item><term>Unsolicited Samsung events</term><description>parsed by <see cref="ProcessFeedbackMessage"/> and applied by <see cref="TryApplyPower"/>, <see cref="TryApplyMute"/>, <see cref="TryApplyVolume"/>, <see cref="TryApplySource"/>.</description></item>
-		///   <item><term>Warm/cool timers</term><description>infer power-on after <see cref="SamsungTizenWebsocketConfig.WarmingTimeMs"/>; power-off feedback fires immediately on command.</description></item>
-		/// </list>
+		/// Maintains session lifecycle and polls device state.
+		/// Volume and mute feedback are polled via UPnP SOAP GetVolume/GetMute.
+		/// Power and source feedback rely on WebSocket events and warm/cool timers.
 		/// </summary>
 		public void Poll()
 		{
@@ -588,7 +548,36 @@ namespace PepperDash.Essentials.Plugin
 				return;
 
 			var _ = auth.RefreshTokenAsync();
+			PollUpnpFeedback();
 			IsOnlineFeedback.FireUpdate();
+		}
+
+		/// <summary>
+		/// Polls volume and mute state from the display via UPnP SOAP GetVolume/GetMute.
+		/// Updates local state and fires feedback if changed.
+		/// </summary>
+		private void PollUpnpFeedback()
+		{
+			try
+			{
+				var vol = upnpClient.GetVolume();
+				if (vol >= 0 && vol != volumeLevel)
+				{
+					volumeLevel = vol;
+					VolumeLevelFeedback.FireUpdate();
+				}
+
+				var mute = upnpClient.GetMute();
+				if (mute.HasValue && mute.Value != isMuted)
+				{
+					isMuted = mute.Value;
+					IsMutedFeedback.FireUpdate();
+				}
+			}
+			catch (Exception ex)
+			{
+				this.LogVerbose("UPnP poll failed: {message}", ex.Message);
+			}
 		}
 
 		private void StartPollTimer()
@@ -606,7 +595,6 @@ namespace PepperDash.Essentials.Plugin
 			warmupTimer = null;
 			cooldownTimer?.Dispose();
 			cooldownTimer = null;
-			StopVolumeRamp();
 		}
 
 		private void SetWarmingUp(bool value)

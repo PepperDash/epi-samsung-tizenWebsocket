@@ -43,6 +43,10 @@ namespace PepperDash.Essentials.Plugin
 		[JsonProperty("warmingTimeMs")]
 		public uint WarmingTimeMs { get; set; } = 10000;
 
+		/// <summary>UPnP RenderingControl service port for direct volume/mute control (default: 9197).</summary>
+		[JsonProperty("upnpPort")]
+		public int UpnpPort { get; set; } = 9197;
+
 		/// <summary>Optional friendly names and visibility per source key.</summary>
 		[JsonProperty("friendlyNames")]
 		public List<SamsungInputFriendlyName> FriendlyNames { get; set; }

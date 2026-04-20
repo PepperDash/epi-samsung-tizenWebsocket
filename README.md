@@ -8,13 +8,17 @@ Provided under MIT license
 
 ## Overview
 
-PepperDash Essentials plugin for two-way control of Samsung Tizen displays over the WebSocket API (`samsung.remote.control` channel).
+PepperDash Essentials plugin for two-way control of Samsung Tizen displays using:
 
-Tested on Samsung QN65-QN990FFXZA. Should work with other Samsung Tizen models that expose the WebSocket API on port 8001 (insecure) or 8002 (secure/TLS).
+- **WebSocket API** (`samsung.remote.control` channel) — power, input selection, and key emulation
+- **[UPnP SOAP](https://en.wikipedia.org/wiki/Universal_Plug_and_Play) RenderingControl** — direct absolute volume set/get and mute set/get with real feedback
+
+Tested on Samsung QN65-QN990FFXZA. Should work with other Samsung Tizen models that expose the WebSocket API on port 8001/8002 and UPnP RenderingControl on port 9197.
 
 ### Key Features
 
 - Raw TCP + manual WebSocket upgrade (works around Mono `ClientWebSocket` limitations on Crestron 4-Series)
+- UPnP SOAP [RenderingControl:1](http://upnp.org/specs/av/UPnP-av-RenderingControl-v1-Service.pdf) for direct volume/mute control with polled feedback
 - Automatic Samsung pairing token management — tokens are persisted locally and updated on rotation
 - SSL/TLS support with self-signed certificate acceptance
 - Serialized writes via `SemaphoreSlim` to prevent Mono `SslStream` concurrency errors
@@ -29,8 +33,21 @@ Tested on Samsung QN65-QN990FFXZA. Should work with other Samsung Tizen models t
 | `SamsungTizenWebsocketFactory` | Creates devices for type `samsungTizenWebsocket` |
 | `SamsungTizenWebsocketController` | `TwoWayDisplayBase` controller — commands, feedback, bridge linking |
 | `SamsungTizenWebsocketProtocolBridge` | Raw TCP WebSocket transport, frame encoding/decoding, Samsung event handling |
+| `SamsungTizenUpnpClient` | UPnP SOAP client for [RenderingControl:1](http://upnp.org/specs/av/UPnP-av-RenderingControl-v1-Service.pdf) — volume/mute get/set |
 | `SamsungTizenWebsocketConfig` | Device properties configuration model |
 | `SamsungTizenWebsocketBridgeJoinMap` | Digital/analog/serial bridge join definitions |
+
+### Control Protocol Summary
+
+| Feature | Protocol | Notes |
+|---|---|---|
+| Power on/off | WebSocket (`KEY_POWER`) | [Samsung Remote Control WebSocket API](https://developer.samsung.com/smarttv/develop/extension-libraries/smart-view-sdk/receiver-apps/tv-websocket-api.html) |
+| Input selection | WebSocket (`KEY_HDMI1`, etc.) | Key emulation via `samsung.remote.control` channel |
+| Volume set (absolute) | UPnP SOAP `SetVolume` | [RenderingControl:1 §2.2.25](http://upnp.org/specs/av/UPnP-av-RenderingControl-v1-Service.pdf) |
+| Volume up/down | UPnP SOAP `GetVolume` + `SetVolume(±1)` | Reads current, then sets |
+| Volume feedback | UPnP SOAP `GetVolume` (polled) | Real display state, not optimistic |
+| Mute on/off/toggle | UPnP SOAP `SetMute` | Direct on/off, no toggle ambiguity |
+| Mute feedback | UPnP SOAP `GetMute` (polled) | Real display state |
 
 ## Device Configuration
 
@@ -60,6 +77,7 @@ Use `method: "https"` with port `8002` for secure WebSocket connections. This is
                 "autoReconnectIntervalMs": 10000
             }
         },
+        "upnpPort": 9197,
         "pollIntervalMs": 30000,
         "coolingTimeMs": 8000,
         "warmingTimeMs": 10000,
@@ -87,6 +105,7 @@ Use `method: "https"` with port `8002` for secure WebSocket connections. This is
 | `warmingTimeMs` | uint | No | `10000` | Local warmup timer after power on |
 | `warningTimeoutMs` | long | No | `60000` | Warning threshold for response delays |
 | `errorTimeoutMs` | long | No | `120000` | Error threshold for response delays |
+| `upnpPort` | int | No | `9197` | UPnP [RenderingControl](http://upnp.org/specs/av/UPnP-av-RenderingControl-v1-Service.pdf) service port for volume/mute SOAP control |
 | `friendlyNames` | array | No | `[]` | Input rename/hide rules. Keys: `hdmi1`–`hdmi4`, `displayport` |
 
 ### Control Method Behavior
@@ -191,11 +210,18 @@ DEVJSON:9 {"deviceKey":"display-1","methodName":"InputDisplayPort","params":[]}
 
 #### Volume & Mute
 
+Volume and mute commands use [UPnP SOAP RenderingControl](http://upnp.org/specs/av/UPnP-av-RenderingControl-v1-Service.pdf) for direct set. Volume level feedback is polled from the display on each poll interval.
+
 ```
 DEVJSON:9 {"deviceKey":"display-1","methodName":"VolumeUp","params":[false]}
 DEVJSON:9 {"deviceKey":"display-1","methodName":"VolumeDown","params":[false]}
+DEVJSON:9 {"deviceKey":"display-1","methodName":"SetVolume","params":[32768]}
 DEVJSON:9 {"deviceKey":"display-1","methodName":"MuteToggle","params":[]}
+DEVJSON:9 {"deviceKey":"display-1","methodName":"MuteOn","params":[]}
+DEVJSON:9 {"deviceKey":"display-1","methodName":"MuteOff","params":[]}
 ```
+
+> `SetVolume` accepts 0–65535 (Crestron analog range). The plugin scales to 0–100 for the display.
 
 #### Send Arbitrary Key (Testing)
 
@@ -254,7 +280,8 @@ When a custom bridge map is supplied, the plugin applies it via `joinMapKey` thr
 
 | Join Name | Offset | Capability | Description |
 |---|---:|---|---|
-| `VolumeLevel` | 1 | ToFromSIMPL | Volume level (0–100) |
+| `VolumeLevel` | 5 | ToFromSIMPL | Volume level (0–65535 analog, scaled to 0–100 on the display) |
+| `InputSelect` | 11 | ToFromSIMPL | Input select (analog) |
 
 ### Serial Joins
 
@@ -267,13 +294,25 @@ When a custom bridge map is supplied, the plugin applies it via `joinMapKey` thr
 
 - **Power commands use `KEY_POWER` (toggle)** — `KEY_POWERON` / `KEY_POWEROFF` are not supported on all Samsung models. The plugin needs power state feedback to avoid toggling in the wrong direction.
 - **Input selection via key codes** — some Samsung models may not respond to `KEY_HDMI1` etc. Use `SendKey` to test which codes your model supports.
-- **Feedback is optimistic** — power, volume, mute, and source feedback are set locally on command send. Samsung consumer displays do not reliably emit status events over WebSocket.
+- **Power and source feedback is optimistic** — power and source state are set locally on command send. Samsung consumer displays do not reliably emit power/source events over WebSocket. Volume and mute feedback are real values polled via UPnP.
 - **Token rotation** — Samsung rotates pairing tokens on each connection. The plugin handles this automatically but the display must remain accessible on the network.
+- **UPnP port may vary** — most Samsung Tizen models expose RenderingControl on port 9197, but some firmware versions use port 7676 or an SSDP-advertised port. Use the `upnpPort` config property to override if needed.
 
 ## Dependencies
 
 - [PepperDash Essentials](https://github.com/PepperDash/Essentials) (referenced via NuGet)
 - Crestron 4-Series processor (.NET Framework 4.7.2)
+
+## References
+
+- [Samsung Smart View SDK — TV WebSocket API](https://developer.samsung.com/smarttv/develop/extension-libraries/smart-view-sdk/receiver-apps/tv-websocket-api.html)
+- [Samsung Tizen TVAudioControl Web API](https://docs.tizen.org/application/web/api/latest/device_api/tv/tizen/tvaudiocontrol.html) (on-device JavaScript only; not usable from external control)
+- [Samsung Tizen .NET API References](https://developer.samsung.com/smarttv/develop/api-references/tizen-net-api-references.html) (on-device app APIs only)
+- [UPnP AV RenderingControl:1 Service Template](http://upnp.org/specs/av/UPnP-av-RenderingControl-v1-Service.pdf)
+- [Home Assistant Samsung TV Integration](https://github.com/home-assistant/core/tree/dev/homeassistant/components/samsungtv) (reference for UPnP + WebSocket patterns)
+- [ha-samsungtv-tizen UPnP Client](https://github.com/jaruba/ha-samsungtv-tizen/blob/main/custom_components/samsungtv_tizen/upnp.py) (RenderingControl SOAP reference)
+- [samsung-tv-ws-api](https://github.com/xchwarze/samsung-tv-ws-api) (WebSocket remote control reference)
+- [PepperDash Essentials DisplayControllerJoinMap](https://github.com/PepperDash/Essentials/blob/develop/src/PepperDash.Essentials.Core/Bridges/JoinMaps/DisplayControllerJoinMap.cs)
 
 ## Build
 

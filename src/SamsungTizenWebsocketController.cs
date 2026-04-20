@@ -50,6 +50,12 @@ namespace PepperDash.Essentials.Plugin
 		private int volumeLevel;     // Optimistic (±1 on key); corrected by TryApplyVolume if event arrives
 		private string currentSource; // Optimistic (set in SendInputCommand); corrected by TryApplySource if event arrives
 
+		// Volume ramp state — used when SetVolume targets an absolute level via sequential key presses.
+		private int targetVolumeLevel;
+		private Timer volumeRampTimer;
+		private readonly object volumeRampLock = new object();
+		private const int VolumeRampIntervalMs = 150;
+
 		#region Feedbacks
 
 		/// <summary>Reports mute state to bridge.</summary>
@@ -97,7 +103,7 @@ namespace PepperDash.Essentials.Plugin
 
 			IsMutedFeedback = new BoolFeedback("mute", () => isMuted);
 			IsOnlineFeedback = new BoolFeedback("online", () => protocolBridge.IsConnected);
-			VolumeLevelFeedback = new IntFeedback("volume", () => volumeLevel);
+			VolumeLevelFeedback = new IntFeedback("volume", () => ScaleVolumeToFeedback(volumeLevel));
 			CurrentSourceFeedback = new StringFeedback("source", () => currentSource ?? string.Empty);
 			VideoMuteIsOn = IsMutedFeedback;
 			InputNumberFeedback = new IntFeedback("inputNumber", () => inputNumber);
@@ -168,6 +174,7 @@ namespace PepperDash.Essentials.Plugin
 			// Volume
 			trilist.SetSigTrueAction(joinMap.VolumeUp.JoinNumber, () => VolumeUp(false));
 			trilist.SetSigTrueAction(joinMap.VolumeDown.JoinNumber, () => VolumeDown(false));
+			trilist.SetUShortSigAction(joinMap.VolumeLevel.JoinNumber, SetVolume);
 			VolumeLevelFeedback.LinkInputSig(trilist.UShortInput[joinMap.VolumeLevel.JoinNumber]);
 
 			// Inputs (digital select, digital feedback, names)
@@ -302,6 +309,7 @@ namespace PepperDash.Essentials.Plugin
 		public void VolumeUp(bool pressRelease)
 		{
 			if (pressRelease) return;
+			StopVolumeRamp();
 			protocolBridge.SendKey(SamsungTizenCommands.KeyVolUp);
 			SetLocalVolume(volumeLevel + 1);
 		}
@@ -313,6 +321,7 @@ namespace PepperDash.Essentials.Plugin
 		public void VolumeDown(bool pressRelease)
 		{
 			if (pressRelease) return;
+			StopVolumeRamp();
 			protocolBridge.SendKey(SamsungTizenCommands.KeyVolDown);
 			SetLocalVolume(volumeLevel - 1);
 		}
@@ -340,9 +349,28 @@ namespace PepperDash.Essentials.Plugin
 				MuteToggle();
 		}
 
+		/// <summary>
+		/// Sets volume to an absolute level. Accepts 0-65535 from the SIMPL analog join,
+		/// scales to 0-100 for the Samsung display, and ramps via sequential KEY_VOLUP/KEY_VOLDOWN
+		/// key presses because the Samsung WebSocket remote-control API does not expose a
+		/// direct set-volume command.
+		/// </summary>
 		public void SetVolume(ushort level)
 		{
-			SetLocalVolume(level);
+			var scaledLevel = ScaleVolumeFromAnalog(level);
+
+			lock (volumeRampLock)
+			{
+				targetVolumeLevel = scaledLevel;
+
+				if (volumeLevel == targetVolumeLevel)
+					return;
+
+				if (volumeRampTimer == null)
+				{
+					volumeRampTimer = new Timer(VolumeRampCallback, null, 0, VolumeRampIntervalMs);
+				}
+			}
 		}
 
 		private void SetLocalVolume(int level)
@@ -353,6 +381,49 @@ namespace PepperDash.Essentials.Plugin
 
 			volumeLevel = clamped;
 			VolumeLevelFeedback.FireUpdate();
+		}
+
+		private void VolumeRampCallback(object state)
+		{
+			lock (volumeRampLock)
+			{
+				if (volumeLevel == targetVolumeLevel)
+				{
+					volumeRampTimer?.Dispose();
+					volumeRampTimer = null;
+					return;
+				}
+
+				if (volumeLevel < targetVolumeLevel)
+				{
+					protocolBridge.SendKey(SamsungTizenCommands.KeyVolUp);
+					SetLocalVolume(volumeLevel + 1);
+				}
+				else
+				{
+					protocolBridge.SendKey(SamsungTizenCommands.KeyVolDown);
+					SetLocalVolume(volumeLevel - 1);
+				}
+			}
+		}
+
+		private void StopVolumeRamp()
+		{
+			lock (volumeRampLock)
+			{
+				volumeRampTimer?.Dispose();
+				volumeRampTimer = null;
+			}
+		}
+
+		private static int ScaleVolumeToFeedback(int level)
+		{
+			return (int)(level * 65535L / 100);
+		}
+
+		private static int ScaleVolumeFromAnalog(ushort level)
+		{
+			return Math.Max(0, Math.Min(100, (int)(level * 100L / 65535)));
 		}
 
 		public void VideoMuteToggle() => MuteToggle();
@@ -535,6 +606,7 @@ namespace PepperDash.Essentials.Plugin
 			warmupTimer = null;
 			cooldownTimer?.Dispose();
 			cooldownTimer = null;
+			StopVolumeRamp();
 		}
 
 		private void SetWarmingUp(bool value)

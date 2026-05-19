@@ -186,3 +186,194 @@ The TCP RST / connection failure was caused by a breaking change introduced in E
 - Added `private async Task InitialConnectAsync()`
 - `ProtocolBridge_OnError`: split into transient vs non-transient error handling
 - Added `private static bool IsTransientConnectionError(Exception ex)`
+
+---
+
+## Appendix A — Raw Exception Logs (Chronological)
+
+Logs are reproduced as observed on the processor. Each block is annotated with the issue it triggered and the section of this report that addresses it.
+
+---
+
+### A.1 — Startup failure, all displays, Essentials 2.36.0 build (16:16:57–16:16:59)
+**Triggered:** Sections 2.1 (no reconnect), 2.2 (EROR log level), 2.4/2.5 (upgrade rejection)  
+**Assembly:** `91224af6f8d645039b07b7b6cc274795`
+
+```
+Error: SimplSharpPro[App01] # 2026-05-19 16:16:59 # 164ms [EROR][display-hallway] Protocol error: Unable to read data from the transport connection: Connection reset by peer.
+    at System.Net.Sockets.Socket+AwaitableSocketAsyncEventArgs.ThrowException (System.Net.Sockets.SocketError error) [0x00007] in <9c30c834d8664232bafbbf8f27cf0c6c>:0
+    at System.Net.Sockets.Socket+AwaitableSocketAsyncEventArgs.GetResult (System.Int16 token) [0x00022] in <9c30c834d8664232bafbbf8f27cf0c6c>:0
+    at System.Threading.Tasks.ValueTask`1+ValueTaskSourceAsTask+<>c[TResult].<.cctor>b__4_0 (System.Object state) [0x00030] in <e008ef42803d426d9817f43ed5ac3eba>:0
+    --- End of stack trace from previous location where exception was thrown ---
+    at PepperDash.Essentials.Plugins.Samsung.TizenWebsocket.Protocol.SamsungTizenWebsocketProtocolBridge.PerformWebSocketUpgradeAsync (System.IO.Stream stream, System.Threading.CancellationToken cancellationToken) [0x0033f] in <91224af6f8d645039b07b7b6cc274795>:0
+
+Error: SimplSharpPro[App01] # 2026-05-19 16:16:59 # 164ms [EROR][display-suite-1] Protocol error: Unable to read data from the transport connection: Connection reset by peer.
+    (same stack trace — assembly 91224af6...)
+
+Error: SimplSharpPro[App01] # 2026-05-19 16:16:59 # 165ms [EROR][display-reception] Protocol error: Unable to read data from the transport connection: Connection reset by peer.
+    (same stack trace — assembly 91224af6...)
+
+Error: SimplSharpPro[App01] # 2026-05-19 16:16:59 # 164ms [EROR][display-suite-2] Protocol error: Unable to read data from the transport connection: Connection reset by peer.
+    (same stack trace — assembly 91224af6...)
+
+Error: SimplSharpPro[App01] # 2026-05-19 16:16:59 # 164ms [EROR][display-suite-3] Protocol error: Unable to read data from the transport connection: Connection reset by peer.
+    (same stack trace — assembly 91224af6...)
+
+Error: SimplSharpPro[App01] # 2026-05-19 16:16:59 # 189ms [EROR][display-suite-5] Protocol error: Unable to read data from the transport connection: Connection reset by peer.
+    (same stack trace — assembly 91224af6...)
+
+Error: SimplSharpPro[App01] # 2026-05-19 16:16:59 # 193ms [EROR][display-suite-4] Protocol error: Unable to read data from the transport connection: Connection reset by peer.
+    (same stack trace — assembly 91224af6...)
+```
+
+**Notes:**
+- All seven displays failed within the same 30 ms window at startup.
+- Assembly hash `91224af6` = pre-fix build.
+- No reconnect log lines followed — confirmed the reconnect loop was never started (Section 2.1).
+
+---
+
+### A.2 — Same failure, second build deployment (17:22:28)
+**Triggered:** Confirmed Section 2.2 fix was not yet deployed  
+**Assembly:** `fa1e9c7e1a664eafb12e2854dc686520`
+
+```
+[2026-05-19 17:22:28.449][EROR][App 1][display-suite-2] Protocol error: Unable to read data from the transport connection: Connection reset by peer.
+    at System.Net.Sockets.Socket+AwaitableSocketAsyncEventArgs.ThrowException (System.Net.Sockets.SocketError error) [0x00007] in <9c30c834d8664232bafbbf8f27cf0c6c>:0
+    at System.Net.Sockets.Socket+AwaitableSocketAsyncEventArgs.GetResult (System.Int16 token) [0x00022] in <9c30c834d8664232bafbbf8f27cf0c6c>:0
+    at System.Threading.Tasks.ValueTask`1+ValueTaskSourceAsTask+<>c[TResult].<.cctor>b__4_0 (System.Object state) [0x00030] in <e008ef42803d426d9817f43ed5ac3eba>:0
+    --- End of stack trace from previous location where exception was thrown ---
+    at PepperDash.Essentials.Plugins.Samsung.TizenWebsocket.Protocol.SamsungTizenWebsocketProtocolBridge.PerformWebSocketUpgradeAsync (System.IO.Stream stream, System.Threading.CancellationToken cancellationToken) [0x0033f] in <fa1e9c7e1a664eafb12e2854dc686520>:0
+
+[2026-05-19 17:22:28.451][EROR][App 1][display-reception] Protocol error: Unable to read data from the transport connection: Connection reset by peer.
+    (same stack — assembly fa1e9c7e...)
+
+[2026-05-19 17:22:28.453][EROR][App 1][display-suite-5] Protocol error: Unable to read data from the transport connection: Connection reset by peer.
+    (same stack — assembly fa1e9c7e...)
+
+[2026-05-19 17:22:28.453][EROR][App 1][display-suite-3] Protocol error: Unable to read data from the transport connection: Connection reset by peer.
+    (same stack — assembly fa1e9c7e...)
+
+[2026-05-19 17:22:28.456][EROR][App 1][display-suite-4] Protocol error: Unable to read data from the transport connection: Connection reset by peer.
+    (same stack — assembly fa1e9c7e...)
+
+[2026-05-19 17:22:28.461][EROR][App 1][display-suite-1] Protocol error: Unable to read data from the transport connection: Connection reset by peer.
+    (same stack — assembly fa1e9c7e...)
+
+[2026-05-19 17:22:28.469][EROR][App 1][display-hallway] Protocol error: Unable to read data from the transport connection: Connection reset by peer.
+    (same stack — assembly fa1e9c7e...)
+```
+
+**Notes:**
+- Different assembly hash (`fa1e9c7e`) = intermediate build deployed between sessions; our fixes were not yet compiled into it.
+- Error still at `[EROR]` level — confirms Sections 2.1 and 2.2 fixes were not included.
+
+---
+
+### A.3 — Fixes 2.1 and 2.2 deployed — log level and reconnect loop confirmed (17:26:06)
+**Confirmed:** Section 2.1 (reconnect loop now running) and Section 2.2 (EROR → INFO)
+
+```
+[2026-05-19 17:26:06.087][INFO][App 1][display-suite-4] Connection state changed: Connecting
+[2026-05-19 17:26:06.097][INFO][App 1][display-suite-4] Connection error (will retry): Unable to read data from the transport connection: Connection reset by peer.
+[2026-05-19 17:26:06.099][INFO][App 1][display-suite-4] Connection state changed: Disconnected
+[2026-05-19 17:26:06.101][INFO][App 1][display-suite-4] Reconnecting in 60s (attempt 6)...
+
+[2026-05-19 17:26:06.102][INFO][App 1][display-suite-2] Connection error (will retry): Unable to read data from the transport connection: Connection reset by peer.
+[2026-05-19 17:26:06.103][INFO][App 1][display-suite-2] Connection state changed: Disconnected
+[2026-05-19 17:26:06.104][INFO][App 1][display-suite-2] Reconnecting in 60s (attempt 6)...
+
+[2026-05-19 17:26:06.104][INFO][App 1][display-reception] Connection error (will retry): Unable to read data from the transport connection: Connection reset by peer.
+[2026-05-19 17:26:06.106][INFO][App 1][display-reception] Reconnecting in 60s (attempt 6)...
+
+[2026-05-19 17:26:06.107][INFO][App 1][display-suite-1] Connection error (will retry): Unable to read data from the transport connection: Connection reset by peer.
+[2026-05-19 17:26:06.111][INFO][App 1][display-suite-1] Reconnecting in 60s (attempt 6)...
+
+[2026-05-19 17:26:06.110][INFO][App 1][display-hallway] Connection error (will retry): Unable to read data from the transport connection: Connection reset by peer.
+[2026-05-19 17:26:06.113][INFO][App 1][display-hallway] Reconnecting in 60s (attempt 6)...
+
+[2026-05-19 17:26:06.115][INFO][App 1][display-suite-3] Connection error (will retry): Unable to read data from the transport connection: Connection reset by peer.
+[2026-05-19 17:26:06.117][INFO][App 1][display-suite-3] Reconnecting in 60s (attempt 6)...
+
+[2026-05-19 17:26:06.116][INFO][App 1][display-suite-5] Connection error (will retry): Unable to read data from the transport connection: Connection reset by peer.
+[2026-05-19 17:26:06.118][INFO][App 1][display-suite-5] Reconnecting in 60s (attempt 6)...
+```
+
+**Notes:**
+- Error level downgraded from `[EROR]` to `[INFO]` — Section 2.2 confirmed working.
+- All displays now showing "Reconnecting in 60s" — Section 2.1 confirmed working.
+- All at attempt 6 (exponential backoff: 2 s → 4 s → 8 s → 16 s → 32 s → 60 s cap).
+- Underlying TCP RST still occurring — plugin-side fixes did not resolve the Essentials 2.36.0 root cause.
+
+---
+
+### A.4 — Commands dropped while disconnected (17:45:15)
+**Triggered:** Section 2.3 (queued command delivery)
+
+```
+[2026-05-19 17:45:15.768][INFO][App 1][display-suite-5] PowerOff
+[2026-05-19 17:45:15.769][INFO][App 1][display-suite-5] SendKey(KEY_POWER) dropped — not connected (state=Disconnected)
+
+[2026-05-19 17:45:19.899][INFO][App 1][display-suite-5] PowerOff
+[2026-05-19 17:45:19.901][INFO][App 1][display-suite-5] SendKey(KEY_POWER) dropped — not connected (state=Disconnected)
+
+[2026-05-19 17:45:20.571][INFO][App 1][display-suite-5] PowerOff
+[2026-05-19 17:45:20.572][INFO][App 1][display-suite-5] SendKey(KEY_POWER) dropped — not connected (state=Disconnected)
+
+[2026-05-19 17:45:21.994][INFO][App 1][display-suite-5] PowerOff
+[2026-05-19 17:45:21.995][INFO][App 1][display-suite-5] SendKey(KEY_POWER) dropped — not connected (state=Disconnected)
+```
+
+**Notes:**
+- Four PowerOff commands were sent within 6 seconds; all silently dropped.
+- No reconnect attempt was triggered by the command arrival.
+- SIMPL program pulsed Bool 201 (PowerOff join) four times in rapid succession.
+
+---
+
+### A.5 — Section 2.3 fix confirmed — command queuing and backoff interrupt (17:52:03)
+**Confirmed:** Section 2.3 (pending key queue and reconnect-delay interrupt)
+
+```
+[2026-05-19 17:52:03.157][INFO][App 1][display-suite-5] Connection error (will retry): Unable to read data from the transport connection: Connection reset by peer.
+[2026-05-19 17:52:03.158][INFO][App 1][display-suite-5] Connection state changed: Disconnected
+[2026-05-19 17:52:03.159][INFO][App 1][display-suite-5] Reconnecting in 60s (attempt 20)...
+
+[2026-05-19 17:52:03.330][INFO][App 1][display-suite-5] Reconnect delay interrupted by pending command; retrying now...
+[2026-05-19 17:52:03.331][INFO][App 1][display-suite-5] Connection state changed: Connecting
+[2026-05-19 17:52:03.332][INFO][App 1][display-suite-5] SendKey(KEY_VOLUP) queued — not connected, retrying now (state=Connecting)
+
+[2026-05-19 17:52:03.341][INFO][App 1][display-suite-5] Connection error (will retry): Unable to read data from the transport connection: Connection reset by peer.
+[2026-05-19 17:52:03.342][INFO][App 1][display-suite-5] Connection state changed: Disconnected
+[2026-05-19 17:52:03.343][INFO][App 1][display-suite-5] Reconnecting in 60s (attempt 21)...
+
+[2026-05-19 17:52:16.211][INFO][App 1][display-suite-2] Connection error (will retry): Unable to read data from the transport connection: Connection reset by peer.
+[2026-05-19 17:52:16.212][INFO][App 1][display-suite-2] Connection state changed: Disconnected
+[2026-05-19 17:52:16.213][INFO][App 1][display-suite-2] Reconnecting in 60s (attempt 6)...
+
+[2026-05-19 17:52:16.213][INFO][App 1][display-suite-1] Connection error (will retry): Unable to read data from the transport connection: Connection reset by peer.
+[2026-05-19 17:52:16.215][INFO][App 1][display-suite-1] Connection state changed: Disconnected
+[2026-05-19 17:52:16.216][INFO][App 1][display-suite-1] Reconnecting in 60s (attempt 6)...
+
+[2026-05-19 17:52:16.213][INFO][App 1][display-reception] Connection error (will retry): Unable to read data from the transport connection: Connection reset by peer.
+[2026-05-19 17:52:16.212][INFO][App 1][display-reception] Connection state changed: Disconnected
+[2026-05-19 17:52:16.213][INFO][App 1][display-reception] Reconnecting in 60s (attempt 6)...
+
+[2026-05-19 17:52:16.213][INFO][App 1][display-hallway] Connection error (will retry): Unable to read data from the transport connection: Connection reset by peer.
+[2026-05-19 17:52:16.215][INFO][App 1][display-hallway] Connection state changed: Disconnected
+[2026-05-19 17:52:16.216][INFO][App 1][display-hallway] Reconnecting in 60s (attempt 6)...
+
+[2026-05-19 17:52:16.295][INFO][App 1][display-suite-3] Connection error (will retry): Unable to read data from the transport connection: Connection reset by peer.
+[2026-05-19 17:52:16.297][INFO][App 1][display-suite-3] Connection state changed: Disconnected
+[2026-05-19 17:52:16.297][INFO][App 1][display-suite-3] Reconnecting in 60s (attempt 6)...
+
+[2026-05-19 17:52:16.298][INFO][App 1][display-suite-4] Connection error (will retry): Unable to read data from the transport connection: Connection reset by peer.
+[2026-05-19 17:52:16.299][INFO][App 1][display-suite-4] Connection state changed: Disconnected
+[2026-05-19 17:52:16.300][INFO][App 1][display-suite-4] Reconnecting in 60s (attempt 6)...
+```
+
+**Notes:**
+- `display-suite-5` at attempt 20 (running since a prior startup cycle); all others at attempt 6 (fresh deployment).
+- "Reconnect delay interrupted by pending command; retrying now..." confirms the `reconnectDelayCts.Cancel()` path in `SendKey` is working.
+- 60 ms later the KEY_VOLUP command is still queued as "retrying now (state=Connecting)" — correct behavior while the TCP connect is in progress.
+- The underlying RST still occurs 9 ms after `Connecting` — Essentials 2.36.0 root cause unresolved at this point.

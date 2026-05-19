@@ -221,6 +221,20 @@ namespace PepperDash.Essentials.Plugins.Samsung.TizenWebsocket.Protocol
 
                 return true;
             }
+            catch (IOException ioEx)
+            {
+                OnInfoMessage?.Invoke(this, string.Format("Connect failed (display may be off): {0}", ioEx.Message));
+                CleanupConnection();
+                SetConnectionState(ConnectionState.Disconnected);
+                return false;
+            }
+            catch (SocketException sockEx)
+            {
+                OnInfoMessage?.Invoke(this, string.Format("Connect failed (network error {0}): {1}", sockEx.SocketErrorCode, sockEx.Message));
+                CleanupConnection();
+                SetConnectionState(ConnectionState.Disconnected);
+                return false;
+            }
             catch (Exception ex)
             {
                 OnError?.Invoke(this, ex);
@@ -274,6 +288,17 @@ namespace PepperDash.Essentials.Plugins.Samsung.TizenWebsocket.Protocol
                 }
 
                 OnError?.Invoke(this, new InvalidOperationException(string.Format("WebSocket upgrade failed: {0}", responseText)));
+                return false;
+            }
+            catch (IOException ioEx)
+            {
+                // Expected when the display is powered off or unreachable — log at info, not error.
+                OnInfoMessage?.Invoke(this, string.Format("WebSocket upgrade failed (display may be off): {0}", ioEx.Message));
+                return false;
+            }
+            catch (SocketException sockEx)
+            {
+                OnInfoMessage?.Invoke(this, string.Format("WebSocket upgrade failed (network error {0}): {1}", sockEx.SocketErrorCode, sockEx.Message));
                 return false;
             }
             catch (Exception ex)

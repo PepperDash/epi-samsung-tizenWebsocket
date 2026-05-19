@@ -125,11 +125,28 @@ namespace PepperDash.Essentials.Plugin
 				Name, protocolBridge.HostAddress, protocolBridge.Port,
 				(config.UseSecureWebSocket() ? "wss" : "ws"));
 
-			// Fire connection in background; don't block on it
-			_ = protocolBridge.ConnectAsync();
+			// Fire connection in background; don't block on it.
+			// Use InitialConnectAsync so that a failed first attempt (e.g. TV in standby)
+			// starts the bridge's reconnect loop — ConnectAsync alone does not retry.
+			_ = InitialConnectAsync();
 
 			StartPollTimer();
 			base.Initialize();
+		}
+
+		/// <summary>
+		/// Attempts an immediate initial connect; if it fails the bridge's reconnect loop
+		/// takes over so the device keeps retrying without manual intervention.
+		/// </summary>
+		private async System.Threading.Tasks.Task InitialConnectAsync()
+		{
+			var connected = await protocolBridge.ConnectAsync().ConfigureAwait(false);
+			if (!connected)
+			{
+				// Receive loop never started, so HandleDisconnectAsync won't be triggered
+				// automatically. Kick it here to start the exponential-backoff retry loop.
+				await protocolBridge.HandleDisconnectAsync().ConfigureAwait(false);
+			}
 		}
 
 		/// <summary>
@@ -694,7 +711,31 @@ namespace PepperDash.Essentials.Plugin
 
 		private void ProtocolBridge_OnError(object sender, Exception ex)
 		{
+			// Transient TCP errors (connection reset, refused, etc.) are expected during the
+			// reconnect cycle when Samsung TVs are powered off. Log at info to avoid noisy EROR
+			// spam in the processor log during normal operation.
+			if (IsTransientConnectionError(ex))
+			{
+				this.LogInformation("Connection error (will retry): {message}", ex.Message);
+				return;
+			}
 			this.LogError("Protocol error: {message}\n{stackTrace}", ex.Message, ex.StackTrace);
+		}
+
+		private static bool IsTransientConnectionError(Exception ex)
+		{
+			for (var e = ex; e != null; e = e.InnerException)
+			{
+				var msg = e.Message;
+				if (string.IsNullOrEmpty(msg)) continue;
+				if (msg.IndexOf("connection reset", StringComparison.OrdinalIgnoreCase) >= 0
+					|| msg.IndexOf("connection refused", StringComparison.OrdinalIgnoreCase) >= 0
+					|| msg.IndexOf("actively refused", StringComparison.OrdinalIgnoreCase) >= 0
+					|| msg.IndexOf("forcibly closed", StringComparison.OrdinalIgnoreCase) >= 0
+					|| msg.IndexOf("no route to host", StringComparison.OrdinalIgnoreCase) >= 0)
+					return true;
+			}
+			return false;
 		}
 
 		/// <summary>

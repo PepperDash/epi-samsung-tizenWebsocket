@@ -49,6 +49,13 @@ namespace PepperDash.Essentials.Plugins.Samsung.TizenWebsocket.Protocol
         private const int unauthorizedReconnectDelayMs = 15000;
         private volatile bool closeFrameReceived;
         private volatile bool reconnectEnabled = true;
+
+        // Pending key queue: commands sent while disconnected are held here and
+        // flushed on the next successful connect. The backoff delay is also interrupted
+        // so the plugin retries immediately when a command arrives.
+        private readonly ConcurrentQueue<string> pendingKeys = new ConcurrentQueue<string>();
+        private volatile string lastPendingKey;
+        private CancellationTokenSource reconnectDelayCts;
         private const string clientName = "ControlSystem";
         private static readonly object tokenFileLock = new object();
         private static readonly string tokenFilePath;
@@ -239,23 +246,33 @@ namespace PepperDash.Essentials.Plugins.Samsung.TizenWebsocket.Protocol
                 var keyBytes = new byte[16];
                 Array.Copy(guidBytes, 0, keyBytes, 0, 16);
                 var key = Convert.ToBase64String(keyBytes);
-                var encodedClientName = Uri.EscapeDataString(Convert.ToBase64String(Encoding.UTF8.GetBytes(clientName)));
+                // Samsung TVs do not URL-decode query parameters — send raw base64 as the
+                // Python reference script does. URL-encoding the '=' padding to '%3D' causes
+                // the TV to fail base64-decoding the name and RST the connection.
+                var encodedClientName = Convert.ToBase64String(Encoding.UTF8.GetBytes(clientName));
 
                 // Build upgrade request — include token if we have one from a previous pairing
                 var path = $"/api/v2/channels/samsung.remote.control?name={encodedClientName}";
                 if (!string.IsNullOrEmpty(Token))
                 {
-                    path += $"&token={Uri.EscapeDataString(Token)}";
+                    path += $"&token={Token}";
                 }
 
+                // Build upgrade request.
+                // Header order and Origin format must match what Samsung TVs accept.
+                // Samsung validates Origin; the port must be included (e.g. https://host:8002)
+                // and header order should follow: Upgrade → Host → Origin → Key → Version → Connection.
+                // Omit User-Agent — Samsung firmware can reject unrecognised UA strings.
+                var hostWithPort = $"{hostAddress}:{port}";
+                var origin = $"{(useSecureWebSocket ? "https" : "http")}://{hostWithPort}";
+
                 var upgradeRequest = $"GET {path} HTTP/1.1\r\n"
-                    + $"Host: {hostAddress}:{port}\r\n"
                     + "Upgrade: websocket\r\n"
-                    + "Connection: Upgrade\r\n"
+                    + $"Host: {hostWithPort}\r\n"
+                    + $"Origin: {origin}\r\n"
                     + $"Sec-WebSocket-Key: {key}\r\n"
                     + "Sec-WebSocket-Version: 13\r\n"
-                    + "User-Agent: ControlSystem\r\n"
-                    + $"Origin: {(useSecureWebSocket ? "https" : "http")}://{hostAddress}\r\n"
+                    + "Connection: Upgrade\r\n"
                     + "\r\n";
 
                 var requestBytes = Encoding.ASCII.GetBytes(upgradeRequest);
@@ -362,13 +379,22 @@ namespace PepperDash.Essentials.Plugins.Samsung.TizenWebsocket.Protocol
 
         /// <summary>
         /// Sends a key-press command fire-and-forget. Safe to call from synchronous context.
-        /// Returns immediately if not connected.
+        /// If not connected, queues the key and interrupts the reconnect backoff delay so
+        /// the plugin retries immediately; the key is delivered once the connection is ready.
         /// </summary>
         public async void SendKey(string cmd)
         {
             if (!IsConnected)
             {
-                OnInfoMessage?.Invoke(this, string.Format("SendKey({0}) dropped — not connected (state={1})", cmd, connectionState));
+                // Deduplicate consecutive identical keys to avoid toggling power etc.
+                if (lastPendingKey != cmd)
+                {
+                    lastPendingKey = cmd;
+                    pendingKeys.Enqueue(cmd);
+                }
+                // Wake the reconnect loop so it retries now instead of waiting out the backoff
+                try { reconnectDelayCts?.Cancel(); } catch { }
+                OnInfoMessage?.Invoke(this, string.Format("SendKey({0}) queued — not connected, retrying now (state={1})", cmd, connectionState));
                 return;
             }
             try
@@ -378,6 +404,15 @@ namespace PepperDash.Essentials.Plugins.Samsung.TizenWebsocket.Protocol
             catch (Exception ex)
             {
                 OnError?.Invoke(this, ex);
+            }
+        }
+
+        private void FlushPendingKeys()
+        {
+            lastPendingKey = null;
+            while (pendingKeys.TryDequeue(out var key))
+            {
+                SendKey(key);
             }
         }
 
@@ -771,6 +806,8 @@ namespace PepperDash.Essentials.Plugins.Samsung.TizenWebsocket.Protocol
                     lastDisconnectWasUnauthorized = false;
                     reconnectAttempts = 0;
                     OnResponseReceived?.Invoke(this, new SamsungResponseMessage { Event = eventName });
+                    // Deliver any commands that arrived while disconnected
+                    FlushPendingKeys();
                     return;
                 }
 
@@ -801,7 +838,7 @@ namespace PepperDash.Essentials.Plugins.Samsung.TizenWebsocket.Protocol
             }
         }
 
-        private async Task HandleDisconnectAsync()
+        public async Task HandleDisconnectAsync()
         {
             CleanupConnection();
             SetConnectionState(ConnectionState.Disconnected);
@@ -824,7 +861,24 @@ namespace PepperDash.Essentials.Plugins.Samsung.TizenWebsocket.Protocol
                 }
 
                 OnInfoMessage?.Invoke(this, string.Format("Reconnecting in {0}s (attempt {1})...", delayMs / 1000, reconnectAttempts));
-                await Task.Delay(delayMs).ConfigureAwait(false);
+
+                // Use a cancellable delay so a queued SendKey can interrupt the wait
+                var delayCts = new CancellationTokenSource();
+                reconnectDelayCts = delayCts;
+                try
+                {
+                    await Task.Delay(delayMs, delayCts.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    OnInfoMessage?.Invoke(this, "Reconnect delay interrupted by pending command; retrying now...");
+                }
+                finally
+                {
+                    delayCts.Dispose();
+                    if (ReferenceEquals(reconnectDelayCts, delayCts))
+                        reconnectDelayCts = null;
+                }
 
                 if (isDisposed || !reconnectEnabled) break;
 

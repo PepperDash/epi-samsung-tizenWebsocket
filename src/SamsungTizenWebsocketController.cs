@@ -11,7 +11,7 @@ using PepperDash.Essentials.Core.Bridges;
 using PepperDash.Essentials.Core.DeviceTypeInterfaces;
 using PepperDash.Essentials.Core.Queues;
 using PepperDash.Essentials.Devices.Displays;
-using PepperDash.Essentials.Plugin.Samsung.TizenWebsocket.Protocol;
+using PepperDash.Essentials.Plugins.Samsung.TizenWebsocket.Protocol;
 using TwoWayDisplayBase = PepperDash.Essentials.Devices.Common.Displays.TwoWayDisplayBase;
 
 namespace PepperDash.Essentials.Plugin
@@ -49,6 +49,12 @@ namespace PepperDash.Essentials.Plugin
 		private bool isCoolingDown;
 		private int volumeLevel;     // Optimistic (±1 on key); corrected by TryApplyVolume if event arrives
 		private string currentSource; // Optimistic (set in SendInputCommand); corrected by TryApplySource if event arrives
+
+		// Volume ramp state — used when SetVolume targets an absolute level via sequential key presses.
+		private int targetVolumeLevel;
+		private Timer volumeRampTimer;
+		private readonly object volumeRampLock = new object();
+		private const int VolumeRampIntervalMs = 150;
 
 		#region Feedbacks
 
@@ -97,7 +103,7 @@ namespace PepperDash.Essentials.Plugin
 
 			IsMutedFeedback = new BoolFeedback("mute", () => isMuted);
 			IsOnlineFeedback = new BoolFeedback("online", () => protocolBridge.IsConnected);
-			VolumeLevelFeedback = new IntFeedback("volume", () => volumeLevel);
+			VolumeLevelFeedback = new IntFeedback("volume", () => ScaleVolumeToFeedback(volumeLevel));
 			CurrentSourceFeedback = new StringFeedback("source", () => currentSource ?? string.Empty);
 			VideoMuteIsOn = IsMutedFeedback;
 			InputNumberFeedback = new IntFeedback("inputNumber", () => inputNumber);
@@ -119,11 +125,28 @@ namespace PepperDash.Essentials.Plugin
 				Name, protocolBridge.HostAddress, protocolBridge.Port,
 				(config.UseSecureWebSocket() ? "wss" : "ws"));
 
-			// Fire connection in background; don't block on it
-			_ = protocolBridge.ConnectAsync();
+			// Fire connection in background; don't block on it.
+			// Use InitialConnectAsync so that a failed first attempt (e.g. TV in standby)
+			// starts the bridge's reconnect loop — ConnectAsync alone does not retry.
+			_ = InitialConnectAsync();
 
 			StartPollTimer();
 			base.Initialize();
+		}
+
+		/// <summary>
+		/// Attempts an immediate initial connect; if it fails the bridge's reconnect loop
+		/// takes over so the device keeps retrying without manual intervention.
+		/// </summary>
+		private async System.Threading.Tasks.Task InitialConnectAsync()
+		{
+			var connected = await protocolBridge.ConnectAsync().ConfigureAwait(false);
+			if (!connected)
+			{
+				// Receive loop never started, so HandleDisconnectAsync won't be triggered
+				// automatically. Kick it here to start the exponential-backoff retry loop.
+				await protocolBridge.HandleDisconnectAsync().ConfigureAwait(false);
+			}
 		}
 
 		/// <summary>
@@ -152,7 +175,7 @@ namespace PepperDash.Essentials.Plugin
 			this.LogInformation("Linking to Bridge Type {type}", GetType().Name);
 
 			// Serial
-			trilist.SetString(joinMap.DeviceName.JoinNumber, Name);
+			trilist.SetString(joinMap.Name.JoinNumber, Name);
 			CurrentSourceFeedback.LinkInputSig(trilist.StringInput[joinMap.CurrentSource.JoinNumber]);
 
 			// Power
@@ -162,21 +185,16 @@ namespace PepperDash.Essentials.Plugin
 			PowerIsOnFeedback.LinkComplementInputSig(trilist.BooleanInput[joinMap.PowerOff.JoinNumber]);
 
 			// Mute
-			trilist.SetSigTrueAction(joinMap.MuteToggle.JoinNumber, MuteToggle);
-			IsMutedFeedback.LinkInputSig(trilist.BooleanInput[joinMap.MuteToggle.JoinNumber]);
+			trilist.SetSigTrueAction(joinMap.VolumeMute.JoinNumber, MuteToggle);
+			IsMutedFeedback.LinkInputSig(trilist.BooleanInput[joinMap.VolumeMute.JoinNumber]);
 
 			// Volume
 			trilist.SetSigTrueAction(joinMap.VolumeUp.JoinNumber, () => VolumeUp(false));
 			trilist.SetSigTrueAction(joinMap.VolumeDown.JoinNumber, () => VolumeDown(false));
+			trilist.SetUShortSigAction(joinMap.VolumeLevel.JoinNumber, SetVolume);
 			VolumeLevelFeedback.LinkInputSig(trilist.UShortInput[joinMap.VolumeLevel.JoinNumber]);
 
-			// Inputs
-			trilist.SetSigTrueAction(joinMap.InputHdmi1.JoinNumber, InputHdmi1);
-			trilist.SetSigTrueAction(joinMap.InputHdmi2.JoinNumber, InputHdmi2);
-			trilist.SetSigTrueAction(joinMap.InputHdmi3.JoinNumber, InputHdmi3);
-			trilist.SetSigTrueAction(joinMap.InputHdmi4.JoinNumber, InputHdmi4);
-			trilist.SetSigTrueAction(joinMap.InputDisplayPort.JoinNumber, InputDisplayPort);
-
+			// Inputs (digital select, digital feedback, names)
 			for (var i = 0; i < InputPorts.Count; i++)
 			{
 				var inputIndex = i;
@@ -190,7 +208,7 @@ namespace PepperDash.Essentials.Plugin
 				});
 
 				var inputName = input.Key;
-				if (Inputs?.Items != null && input.FeedbackMatchObject is string sourceKey && Inputs.Items.TryGetValue(sourceKey, out var selectableItem))
+				if (Inputs?.Items != null && input.FeedbackMatchObject is string fbMatch && Inputs.Items.TryGetValue(fbMatch, out var selectableItem))
 				{
 					inputName = selectableItem.Name;
 				}
@@ -199,7 +217,7 @@ namespace PepperDash.Essentials.Plugin
 
 				if (InputFeedback != null && inputIndex < InputFeedback.Count)
 				{
-					InputFeedback[inputIndex].LinkInputSig(trilist.BooleanInput[(ushort)(joinMap.InputSelectOffset.JoinNumber + inputIndex)]);
+					InputFeedback[inputIndex].LinkInputSig(trilist.BooleanInput[joinMap.InputSelectOffset.JoinNumber + (uint)inputIndex]);
 				}
 			}
 
@@ -217,7 +235,7 @@ namespace PepperDash.Essentials.Plugin
 			trilist.OnlineStatusChange += (o, a) =>
 			{
 				if (!a.DeviceOnLine) return;
-				trilist.SetString(joinMap.DeviceName.JoinNumber, Name);
+				trilist.SetString(joinMap.Name.JoinNumber, Name);
 				UpdateFeedbacks();
 
 				for (var i = 0; i < InputPorts.Count; i++)
@@ -308,6 +326,7 @@ namespace PepperDash.Essentials.Plugin
 		public void VolumeUp(bool pressRelease)
 		{
 			if (pressRelease) return;
+			StopVolumeRamp();
 			protocolBridge.SendKey(SamsungTizenCommands.KeyVolUp);
 			SetLocalVolume(volumeLevel + 1);
 		}
@@ -319,6 +338,7 @@ namespace PepperDash.Essentials.Plugin
 		public void VolumeDown(bool pressRelease)
 		{
 			if (pressRelease) return;
+			StopVolumeRamp();
 			protocolBridge.SendKey(SamsungTizenCommands.KeyVolDown);
 			SetLocalVolume(volumeLevel - 1);
 		}
@@ -346,9 +366,28 @@ namespace PepperDash.Essentials.Plugin
 				MuteToggle();
 		}
 
+		/// <summary>
+		/// Sets volume to an absolute level. Accepts 0-65535 from the SIMPL analog join,
+		/// scales to 0-100 for the Samsung display, and ramps via sequential KEY_VOLUP/KEY_VOLDOWN
+		/// key presses because the Samsung WebSocket remote-control API does not expose a
+		/// direct set-volume command.
+		/// </summary>
 		public void SetVolume(ushort level)
 		{
-			SetLocalVolume(level);
+			var scaledLevel = ScaleVolumeFromAnalog(level);
+
+			lock (volumeRampLock)
+			{
+				targetVolumeLevel = scaledLevel;
+
+				if (volumeLevel == targetVolumeLevel)
+					return;
+
+				if (volumeRampTimer == null)
+				{
+					volumeRampTimer = new Timer(VolumeRampCallback, null, 0, VolumeRampIntervalMs);
+				}
+			}
 		}
 
 		private void SetLocalVolume(int level)
@@ -359,6 +398,51 @@ namespace PepperDash.Essentials.Plugin
 
 			volumeLevel = clamped;
 			VolumeLevelFeedback.FireUpdate();
+		}
+
+		private void VolumeRampCallback(object state)
+		{
+			lock (volumeRampLock)
+			{
+				if (volumeLevel == targetVolumeLevel)
+				{
+					volumeRampTimer?.Dispose();
+					volumeRampTimer = null;
+					return;
+				}
+
+				if (volumeLevel < targetVolumeLevel)
+				{
+					protocolBridge.SendKey(SamsungTizenCommands.KeyVolUp);
+					SetLocalVolume(volumeLevel + 1);
+				}
+				else
+				{
+					protocolBridge.SendKey(SamsungTizenCommands.KeyVolDown);
+					SetLocalVolume(volumeLevel - 1);
+				}
+			}
+		}
+
+		private void StopVolumeRamp()
+		{
+			lock (volumeRampLock)
+			{
+				// Invalidate the target so an already-queued callback finds volumeLevel == targetVolumeLevel and no-ops.
+				targetVolumeLevel = volumeLevel;
+				volumeRampTimer?.Dispose();
+				volumeRampTimer = null;
+			}
+		}
+
+		private static int ScaleVolumeToFeedback(int level)
+		{
+			return (int)(level * 65535L / 100);
+		}
+
+		private static int ScaleVolumeFromAnalog(ushort level)
+		{
+			return Math.Max(0, Math.Min(100, (int)(level * 100L / 65535)));
 		}
 
 		public void VideoMuteToggle() => MuteToggle();
@@ -541,6 +625,7 @@ namespace PepperDash.Essentials.Plugin
 			warmupTimer = null;
 			cooldownTimer?.Dispose();
 			cooldownTimer = null;
+			StopVolumeRamp();
 		}
 
 		private void SetWarmingUp(bool value)
@@ -628,7 +713,31 @@ namespace PepperDash.Essentials.Plugin
 
 		private void ProtocolBridge_OnError(object sender, Exception ex)
 		{
+			// Transient TCP errors (connection reset, refused, etc.) are expected during the
+			// reconnect cycle when Samsung TVs are powered off. Log at info to avoid noisy EROR
+			// spam in the processor log during normal operation.
+			if (IsTransientConnectionError(ex))
+			{
+				this.LogInformation("Connection error (will retry): {message}", ex.Message);
+				return;
+			}
 			this.LogError("Protocol error: {message}\n{stackTrace}", ex.Message, ex.StackTrace);
+		}
+
+		private static bool IsTransientConnectionError(Exception ex)
+		{
+			for (var e = ex; e != null; e = e.InnerException)
+			{
+				var msg = e.Message;
+				if (string.IsNullOrEmpty(msg)) continue;
+				if (msg.IndexOf("connection reset", StringComparison.OrdinalIgnoreCase) >= 0
+					|| msg.IndexOf("connection refused", StringComparison.OrdinalIgnoreCase) >= 0
+					|| msg.IndexOf("actively refused", StringComparison.OrdinalIgnoreCase) >= 0
+					|| msg.IndexOf("forcibly closed", StringComparison.OrdinalIgnoreCase) >= 0
+					|| msg.IndexOf("no route to host", StringComparison.OrdinalIgnoreCase) >= 0)
+					return true;
+			}
+			return false;
 		}
 
 		/// <summary>

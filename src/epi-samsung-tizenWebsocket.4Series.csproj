@@ -4,9 +4,9 @@
 	</PropertyGroup>
 	<PropertyGroup>
 		<TargetFramework>net472</TargetFramework>
-		<RootNamespace>PepperDash.Essentials.Plugin.Samsung.TizenWebsocket</RootNamespace>
+		<RootNamespace>PepperDash.Essentials.Plugins.Samsung.TizenWebsocket</RootNamespace>
 		<Deterministic>false</Deterministic>
-		<AssemblyTitle>PepperDash.Essentials.Plugin.Samsung.TizenWebsocket</AssemblyTitle>
+		<AssemblyTitle>PepperDash.Essentials.Plugins.Samsung.TizenWebsocket</AssemblyTitle>
 		<Company>PepperDash Technology</Company>
 		<Description>This software is a PepperDash Essentials Plugin for the Samsung Tizen Websocket API.</Description>
 		<Copyright>Copyright 2026 PepperDash Technology</Copyright>
@@ -15,7 +15,7 @@
 		<InformationalVersion>$(Version)</InformationalVersion>
 		<OutputPath>bin\$(Configuration)\</OutputPath>
 		<Authors>PepperDash Technology</Authors>
-		<PackageId>PepperDash.Essentials.Plugin.Samsung.TizenWebsocket</PackageId>
+		<PackageId>PepperDash.Essentials.Plugins.Samsung.TizenWebsocket</PackageId>
 		<PackageProjectUrl>https://github.com/PepperDash/epi-samsung-tizenWebsocket.git</PackageProjectUrl>
 		<PackageTags>crestron 4series essentials plugin samsung tizen websocket</PackageTags>
 	</PropertyGroup>

@@ -11,7 +11,7 @@ Usage:
 
 Examples:
     python ws_connect.py 10.0.133.21               # first-time pairing
-    python ws_connect.py 10.0.133.21 15573624       # reconnect with saved token
+    python ws_connect.py 10.0.133.21 <token>          # reconnect with saved token
 
 Requires: pip install websocket-client
 """

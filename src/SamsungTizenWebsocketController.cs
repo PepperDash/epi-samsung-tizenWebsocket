@@ -428,6 +428,8 @@ namespace PepperDash.Essentials.Plugin
 		{
 			lock (volumeRampLock)
 			{
+				// Invalidate the target so an already-queued callback finds volumeLevel == targetVolumeLevel and no-ops.
+				targetVolumeLevel = volumeLevel;
 				volumeRampTimer?.Dispose();
 				volumeRampTimer = null;
 			}

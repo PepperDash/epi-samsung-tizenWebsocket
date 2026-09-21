@@ -10,7 +10,7 @@ Usage:
     python ws_monitor.py <ip_address> <token>
 
 Example:
-    python ws_monitor.py 10.0.133.21 15573624
+    python ws_monitor.py 10.0.133.21 <token>
 
 Requires: pip install websocket-client
 """

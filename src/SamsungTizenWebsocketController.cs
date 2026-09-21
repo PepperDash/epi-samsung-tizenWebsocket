@@ -176,7 +176,7 @@ namespace PepperDash.Essentials.Plugin
 
 			// Serial
 			trilist.SetString(joinMap.Name.JoinNumber, Name);
-			//CurrentSourceFeedback.LinkInputSig(trilist.StringInput[joinMap.CurrentSource.JoinNumber]);
+			CurrentSourceFeedback.LinkInputSig(trilist.StringInput[joinMap.CurrentSource.JoinNumber]);
 
 			// Power
 			trilist.SetSigTrueAction(joinMap.PowerOff.JoinNumber, PowerOff);

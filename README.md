@@ -328,6 +328,8 @@ Output: `output/epi-samsung-tizenWebsocket.4Series.1.0.0-local.cplz`
 <!-- START Interfaces Implemented -->
 ### Interfaces Implemented
 
+- ISelectableItems<string>
+- IDisposable
 - IBasicVolumeWithFeedback
 - IInputHdmi1
 - IInputHdmi2
@@ -338,18 +340,24 @@ Output: `output/epi-samsung-tizenWebsocket.4Series.1.0.0-local.cplz`
 - IHasInputs<string>
 - IBasicVideoMuteWithFeedback
 - IWarmingCooling
-- IDisposable
-- ISelectableItems<string>
 <!-- END Interfaces Implemented -->
 <!-- START Base Classes -->
 ### Base Classes
 
-- TwoWayDisplayBase
 - DisplayControllerJoinMap
+- TwoWayDisplayBase
 <!-- END Base Classes -->
 <!-- START Public Methods -->
 ### Public Methods
 
+- public void Clear()
+- public string GetAddress()
+- public int GetPort()
+- public eControlMethod GetControlMethod()
+- public bool UseSecureWebSocket()
+- public void Select()
+- public void LoadToken()
+- public void Dispose()
 - public void LinkToApi(BasicTriList trilist, uint joinStart, string joinMapKey, EiscApiAdvanced bridge)
 - public void VolumeUp(bool pressRelease)
 - public void VolumeDown(bool pressRelease)
@@ -368,14 +376,6 @@ Output: `output/epi-samsung-tizenWebsocket.4Series.1.0.0-local.cplz`
 - public void InputDisplayPort()
 - public void InputDisplayPort1()
 - public void Poll()
-- public string GetAddress()
-- public int GetPort()
-- public eControlMethod GetControlMethod()
-- public bool UseSecureWebSocket()
-- public void Clear()
-- public void LoadToken()
-- public void Dispose()
-- public void Select()
 <!-- END Public Methods -->
 <!-- START Bool Feedbacks -->
 ### Bool Feedbacks
